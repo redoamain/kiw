@@ -1,36 +1,120 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🚀 KIW — Production Planning & Monitoring System
 
-## Getting Started
+Aplikasi untuk **monitoring produksi** dan **perencanaan kebutuhan material** di departemen **PPIC (Production Planning & Inventory Control)**.
 
-First, run the development server:
+---
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## 📌 Overview
+
+KIW membantu tim dalam:
+
+* Memantau **Production Order (PO)** secara real-time
+* Menghitung kebutuhan material berdasarkan **Bill of Materials (BOM)**
+* Mengontrol ketersediaan stok
+* Menghindari kekurangan material saat proses produksi
+
+---
+
+## 🎯 Fitur Utama
+
+| Fitur                       | Deskripsi                                 |
+| --------------------------- | ----------------------------------------- |
+| 📦 **Monitor PO Aktif**     | Menampilkan semua PO yang belum selesai   |
+| 🧮 **Perhitungan Material** | Otomatis hitung kebutuhan dari BOM        |
+| 📊 **Cek Stok**             | Bandingkan stok tersedia dengan kebutuhan |
+| 🔒 **Commit PO**            | Reserve stok untuk produksi               |
+| 📥 **Export Laporan**       | Download laporan dalam format Excel       |
+
+---
+
+## 👥 Role Pengguna
+
+| Role           | Akses                              |
+| -------------- | ---------------------------------- |
+| **PPIC**       | Input, commit, dan uncommit PO     |
+| **Produksi**   | Melihat kebutuhan material         |
+| **Gudang**     | Melihat stok yang sudah di-reserve |
+| **Purchasing** | Melihat material yang perlu dibeli |
+
+---
+
+## 🔄 Alur Proses
+
+```text
+PO dibuat
+   ↓
+PPIC monitoring di dashboard
+   ↓
+Hitung kebutuhan material (BOM)
+   ↓
+Cek ketersediaan stok
+   ↓
+[Jika cukup] → Commit PO (reserve stok)
+   ↓
+Export laporan untuk produksi
+   ↓
+PO selesai → otomatis hilang dari monitoring
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 🚦 Status PO
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Status           | Deskripsi                           |
+| ---------------- | ----------------------------------- |
+| 🟡 **PO Aktif**  | Belum di-commit / masih berjalan    |
+| 🔵 **Committed** | Stok sudah di-reserve               |
+| ✅ **Completed**  | PO selesai (tidak ditampilkan lagi) |
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## 📄 Struktur Laporan Export
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+File Excel terdiri dari beberapa sheet:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+* **PO** → Data Production Order
+* **BOM** → Struktur material
+* **Per Departemen** → Kebutuhan tiap departemen
+* **Rekap** → Ringkasan total kebutuhan
+* **Keterangan** → Panduan membaca laporan
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## ⚙️ Cara Menjalankan
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+# Install dependencies
+pnpm install
+
+# Jalankan development server
+pnpm dev
+
+# Akses aplikasi
+http://localhost:3000
+```
+
+---
+
+## 🧩 Teknologi
+
+* Next.js
+* Shadcn UI
+* React
+* TypeScript
+* Redux Toolkit
+* Tailwind CSS
+
+---
+
+## 📈 Tujuan Sistem
+
+* Mengurangi kesalahan perhitungan material
+* Meningkatkan efisiensi perencanaan produksi
+* Memberikan visibilitas stok secara real-time
+* Mempermudah koordinasi antar departemen
+
+---
+
+## 📝 Catatan
+
+Sistem ini dirancang untuk membantu proses **Production Planning & Control** agar lebih cepat, akurat, dan terstruktur.
