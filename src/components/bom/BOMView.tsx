@@ -207,6 +207,14 @@ export default function BOMView() {
     setMounted(true);
   }, []);
 
+  // Auto load data when mounted
+  useEffect(() => {
+    if (mounted) {
+      // Auto load all data when page first loads
+      fetchBOM(undefined, true);
+    }
+  }, [mounted]);
+
   const showNotification = (
     message: string,
     type: "success" | "error" | "info" = "success",
@@ -274,15 +282,21 @@ export default function BOMView() {
     > = {};
 
     for (const row of data) {
+      if (!row.itemidHD) {
+        console.warn("Row missing itemidHD:", row);
+        continue;
+      }
+
       if (!result[row.itemidHD]) {
         result[row.itemidHD] = {
-          headerName: row.itemnamehd,
+          headerName: row.itemnamehd || "Unknown Product",
           headerName2: row.itemnamehd2 || "",
           children: [],
           totalComponents: 0,
         };
       }
 
+      // Check for duplicate before adding
       const exists = result[row.itemidHD].children.some(
         (child) => child.ItemID === row.ItemID,
       );
@@ -319,7 +333,7 @@ export default function BOMView() {
   // Hitung total semua produk yang dipilih
   const totalSelectedCount = selectedProducts.size;
 
-  // Fetch BOM data
+  // Fetch BOM data - IMPROVED VERSION
   const fetchBOM = useCallback(
     async (searchItem?: string, fetchAllData: boolean = false) => {
       if (fetchAllData) {
@@ -354,26 +368,91 @@ export default function BOMView() {
           params.fetchAll = true;
         }
 
+        console.log("Fetching BOM with params:", params);
         const res = await axios.get(`/api/bom`, { params });
+
+        console.log("API Response:", res.data);
+        console.log("Response structure:", Object.keys(res.data));
 
         let bomData: BomData[] = [];
 
-        if (res.data.data) {
+        // IMPROVED: Better data extraction
+        if (res.data && res.data.data && Array.isArray(res.data.data)) {
+          console.log(
+            "Data found in res.data.data, length:",
+            res.data.data.length,
+          );
           bomData = res.data.data;
-        } else {
+        } else if (res.data && Array.isArray(res.data)) {
+          console.log(
+            "Data found directly in res.data, length:",
+            res.data.length,
+          );
           bomData = res.data;
+        } else if (res.data && res.data.bom && Array.isArray(res.data.bom)) {
+          console.log(
+            "Data found in res.data.bom, length:",
+            res.data.bom.length,
+          );
+          bomData = res.data.bom;
+        } else if (
+          res.data &&
+          res.data.result &&
+          Array.isArray(res.data.result)
+        ) {
+          console.log(
+            "Data found in res.data.result, length:",
+            res.data.result.length,
+          );
+          bomData = res.data.result;
+        } else if (
+          res.data &&
+          res.data.items &&
+          Array.isArray(res.data.items)
+        ) {
+          console.log(
+            "Data found in res.data.items, length:",
+            res.data.items.length,
+          );
+          bomData = res.data.items;
+        } else {
+          console.error("Unexpected response structure:", res.data);
+          bomData = [];
         }
 
+        // Log sample data for debugging
+        if (bomData.length > 0) {
+          console.log("Sample first item:", bomData[0]);
+          console.log("Sample first item keys:", Object.keys(bomData[0]));
+          console.log("Required fields check:");
+          console.log("- itemidHD:", bomData[0].itemidHD);
+          console.log("- ItemID:", bomData[0].ItemID);
+          console.log("- ItemName:", bomData[0].ItemName);
+          console.log("- BahanQty:", bomData[0].BahanQty);
+        } else {
+          console.warn("No data received from API!");
+          showNotification("Tidak ada data yang diterima dari server", "error");
+        }
+
+        // Remove duplicates
         const uniqueMap = new Map<string, BomData>();
         for (const item of bomData) {
-          const uniqueKey = `${item.itemidHD}|${item.ItemID}`;
-          if (!uniqueMap.has(uniqueKey)) {
-            uniqueMap.set(uniqueKey, item);
+          if (item && item.itemidHD && item.ItemID) {
+            const uniqueKey = `${item.itemidHD}|${item.ItemID}`;
+            if (!uniqueMap.has(uniqueKey)) {
+              uniqueMap.set(uniqueKey, item);
+            }
+          } else {
+            console.warn("Invalid item structure:", item);
           }
         }
 
-        bomData = Array.from(uniqueMap.values());
-        setData(bomData);
+        const uniqueBomData = Array.from(uniqueMap.values());
+        console.log(
+          `Unique data: ${uniqueBomData.length} items (from ${bomData.length} original)`,
+        );
+
+        setData(uniqueBomData);
         setViewMode(
           searchItem && searchItem.trim() !== "" ? "filtered" : "all",
         );
@@ -389,23 +468,33 @@ export default function BOMView() {
         }
 
         const headers = Array.from(
-          new Set(bomData.map((item) => item.itemidHD)),
+          new Set(uniqueBomData.map((item) => item.itemidHD).filter(Boolean)),
         );
+        console.log(`Found ${headers.length} unique products`);
+
         if (headers.length > 10) {
           setExpandedAll(headers.slice(0, 5));
         } else {
           setExpandedAll(headers);
         }
 
-        showNotification(
-          `Berhasil memuat ${bomData.length} komponen dari ${headers.length} produk${fetchAllData ? " (semua data)" : ""}`,
-          "success",
-        );
-      } catch (err) {
+        if (uniqueBomData.length > 0) {
+          showNotification(
+            `Berhasil memuat ${uniqueBomData.length} komponen dari ${headers.length} produk${fetchAllData ? " (semua data)" : ""}`,
+            "success",
+          );
+        } else {
+          showNotification("Tidak ada data BOM yang ditemukan", "info");
+        }
+      } catch (err: any) {
         console.error("Gagal ambil BOM:", err);
+        console.error("Error details:", err.response?.data || err.message);
         setData([]);
         setHasSearched(true);
-        showNotification("Gagal memuat data BOM", "error");
+        showNotification(
+          err.response?.data?.error || err.message || "Gagal memuat data BOM",
+          "error",
+        );
         if (progressInterval) clearInterval(progressInterval);
         setLoadProgress({ current: 0, total: 100, visible: false });
       } finally {
@@ -1546,13 +1635,9 @@ export default function BOMView() {
                             className="inline-flex items-center gap-1 h-6 px-2 text-xs rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground cursor-pointer"
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleAddClick(
-                                hd,
-                                group.headerName,
-                                parseInt(
-                                  group.children[0]?.TransID.toString() || "0",
-                                ),
-                              );
+                              // Get TransID from the first child
+                              const transId = group.children[0]?.TransID || 0;
+                              handleAddClick(hd, group.headerName, transId);
                             }}
                           >
                             <Plus className="h-3 w-3" />
@@ -1621,13 +1706,13 @@ export default function BOMView() {
                               <TableBody>
                                 {group.children.length === 0 ? (
                                   <TableRow>
-                                    <td
+                                    <TableCell
                                       colSpan={10}
                                       className="px-4 py-8 text-center text-gray-500"
                                     >
                                       Belum ada komponen. Klik "Tambah" untuk
                                       menambahkan.
-                                    </td>
+                                    </TableCell>
                                   </TableRow>
                                 ) : (
                                   group.children.map((row, index: number) => (
@@ -1773,16 +1858,11 @@ export default function BOMView() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() =>
-                                  handleAddClick(
-                                    hd,
-                                    group.headerName,
-                                    parseInt(
-                                      group.children[0]?.TransID.toString() ||
-                                        "0",
-                                    ),
-                                  )
-                                }
+                                onClick={() => {
+                                  const transId =
+                                    group.children[0]?.TransID || 0;
+                                  handleAddClick(hd, group.headerName, transId);
+                                }}
                               >
                                 <Plus className="h-3 w-3 mr-1" /> Tambah
                                 Komponen
