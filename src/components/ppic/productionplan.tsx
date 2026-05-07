@@ -3556,7 +3556,8 @@ export default function ProductionPlanPage() {
           (item) =>
             item["Kode Material"]?.toLowerCase().includes(term) ||
             item["Nama Material"]?.toLowerCase().includes(term) ||
-            item["Departemen"]?.toLowerCase().includes(term),
+            item["Departemen"]?.toLowerCase().includes(term) ||
+            item["Reserved Oleh SPK"]?.toLowerCase().includes(term),
         );
       }
 
@@ -3679,7 +3680,7 @@ export default function ProductionPlanPage() {
               <div className="flex-1 relative min-w-[200px]">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Cari Kode Material, Nama Material, atau Departemen..."
+                  placeholder="Cari Kode Material, Nama Material, Departemen, atau SPK..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-8"
@@ -3729,7 +3730,7 @@ export default function ProductionPlanPage() {
             <div className="border rounded-md h-full">
               <div
                 className="overflow-auto"
-                style={{ maxHeight: "calc(90vh - 250px)" }}
+                style={{ maxHeight: "calc(90vh - 280px)" }}
               >
                 <Table>
                   <TableHeader className="sticky top-0 bg-gray-50 z-10">
@@ -3786,6 +3787,13 @@ export default function ProductionPlanPage() {
                       >
                         Available {getSortIcon("Qty Available")}
                       </TableHead>
+                      {/* KOLOM RESERVED OLEH SPK */}
+                      <TableHead
+                        className="min-w-[250px] cursor-pointer"
+                        onClick={() => handleSort("Reserved Oleh SPK")}
+                      >
+                        Reserved Oleh SPK {getSortIcon("Reserved Oleh SPK")}
+                      </TableHead>
                       <TableHead
                         className="min-w-[100px] cursor-pointer"
                         onClick={() => handleSort("Status Stock")}
@@ -3839,6 +3847,12 @@ export default function ProductionPlanPage() {
                         <TableCell className="text-right font-mono">
                           {item["Qty Available"]}
                         </TableCell>
+                        {/* RESERVED OLEH SPK */}
+                        <TableCell className="text-sm whitespace-pre-wrap max-w-[250px] break-words">
+                          {item["Reserved Oleh SPK"] !== "-"
+                            ? item["Reserved Oleh SPK"]
+                            : "-"}
+                        </TableCell>
                         <TableCell
                           className={`text-sm font-bold ${
                             item["Status Stock"] === "AMAN"
@@ -3860,7 +3874,7 @@ export default function ProductionPlanPage() {
                     {filteredAndSortedData.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={11}
+                          colSpan={12}
                           className="text-center py-8 text-muted-foreground"
                         >
                           Tidak ada data yang sesuai
