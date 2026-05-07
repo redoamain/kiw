@@ -3418,21 +3418,38 @@ export default function ProductionPlanPage() {
       }
 
       // 🔥 HITUNG STATUS STOCK
-      const getStockStatus = (stockAkhir: number, totalNeeded: number) => {
-        const shortage = totalNeeded - stockAkhir;
-        if (stockAkhir >= totalNeeded) {
-          return { status: "AMAN", color: "text-green-600", shortage: 0 };
-        } else if (stockAkhir > 0) {
+      // Di dalam fungsi previewExport, perbaiki bagian perhitungan status stock:
+
+      // 🔥 HITUNG STATUS STOCK dengan rumus yang benar
+      const getStockStatus = (
+        stockWincp: number,
+        totalNeeded: number,
+        qtyReserved: number,
+      ) => {
+        // Rumus: Kekurangan = (Total Kebutuhan + Reserved PO Lain) - Stok Wincp
+        const totalDibutuhkan = totalNeeded + qtyReserved;
+        const shortage = totalDibutuhkan - stockWincp;
+
+        if (stockWincp >= totalDibutuhkan) {
+          return {
+            status: "AMAN",
+            color: "text-green-600",
+            shortage: 0,
+            totalDibutuhkan: totalDibutuhkan,
+          };
+        } else if (stockWincp > 0) {
           return {
             status: "KURANG",
             color: "text-orange-600",
             shortage: shortage,
+            totalDibutuhkan: totalDibutuhkan,
           };
         } else {
           return {
             status: "HABIS",
             color: "text-red-600",
-            shortage: totalNeeded,
+            shortage: totalDibutuhkan,
+            totalDibutuhkan: totalDibutuhkan,
           };
         }
       };
@@ -3447,8 +3464,13 @@ export default function ProductionPlanPage() {
         }
 
         const variantInfo = getVariantInfo(agg.kode);
-        const stockStatus = getStockStatus(agg.stockAkhir, agg.totalNeeded);
-        const remainingStock = agg.stockAkhir - agg.totalNeeded;
+        // Panggil getStockStatus dengan 3 parameter
+        const stockStatus = getStockStatus(
+          agg.stockWincp,
+          agg.totalNeeded,
+          agg.qtyReserved,
+        );
+        const remainingStock = agg.stockWincp - stockStatus.totalDibutuhkan;
 
         previewMaterialData.push({
           "Kode Material": agg.kode,
@@ -3463,14 +3485,15 @@ export default function ProductionPlanPage() {
           "Stok Wincp (Real)": agg.stockWincp.toLocaleString(),
           "Saldo Akhir": agg.stockAkhir.toLocaleString(),
           "Qty Reserved (PO Lain)": agg.qtyReserved.toLocaleString(),
-          "Qty Available": agg.stockAkhir.toLocaleString(),
+          "Total Dibutuhkan": stockStatus.totalDibutuhkan.toLocaleString(),
+          "Qty Available": (agg.stockWincp - agg.qtyReserved).toLocaleString(),
           "Reserved Oleh SPK": agg.reservedBy,
           "Keterangan Variant": variantInfo,
           "Status Stock": stockStatus.status,
           Kekurangan:
             stockStatus.shortage > 0
               ? stockStatus.shortage.toLocaleString()
-              : "-",
+              : "0",
           "Sisa Setelah Kebutuhan":
             remainingStock >= 0
               ? remainingStock.toLocaleString()
@@ -3733,6 +3756,7 @@ export default function ProductionPlanPage() {
                 style={{ maxHeight: "calc(90vh - 280px)" }}
               >
                 <Table>
+                
                   <TableHeader className="sticky top-0 bg-gray-50 z-10">
                     <TableRow>
                       <TableHead
@@ -3763,6 +3787,19 @@ export default function ProductionPlanPage() {
                         Kebutuhan {getSortIcon("Total Kebutuhan")}
                       </TableHead>
                       <TableHead
+                        className="text-right min-w-[140px] cursor-pointer"
+                        onClick={() => handleSort("Qty Reserved (PO Lain)")}
+                      >
+                        Reserved (PO Lain){" "}
+                        {getSortIcon("Qty Reserved (PO Lain)")}
+                      </TableHead>
+                      <TableHead
+                        className="text-right min-w-[120px] cursor-pointer"
+                        onClick={() => handleSort("Total Dibutuhkan")}
+                      >
+                        Total Dibutuhkan {getSortIcon("Total Dibutuhkan")}
+                      </TableHead>
+                      <TableHead
                         className="text-right min-w-[120px] cursor-pointer"
                         onClick={() => handleSort("Stok Wincp (Real)")}
                       >
@@ -3775,19 +3812,11 @@ export default function ProductionPlanPage() {
                         Saldo Akhir {getSortIcon("Saldo Akhir")}
                       </TableHead>
                       <TableHead
-                        className="text-right min-w-[140px] cursor-pointer"
-                        onClick={() => handleSort("Qty Reserved (PO Lain)")}
-                      >
-                        Reserved (PO Lain){" "}
-                        {getSortIcon("Qty Reserved (PO Lain)")}
-                      </TableHead>
-                      <TableHead
                         className="text-right min-w-[120px] cursor-pointer"
                         onClick={() => handleSort("Qty Available")}
                       >
                         Available {getSortIcon("Qty Available")}
                       </TableHead>
-                      {/* KOLOM RESERVED OLEH SPK */}
                       <TableHead
                         className="min-w-[250px] cursor-pointer"
                         onClick={() => handleSort("Reserved Oleh SPK")}
@@ -3835,19 +3864,21 @@ export default function ProductionPlanPage() {
                         <TableCell className="text-right font-mono font-bold">
                           {item["Total Kebutuhan"]}
                         </TableCell>
+                        <TableCell className="text-right font-mono text-orange-600">
+                          {item["Qty Reserved (PO Lain)"]}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-purple-600">
+                          {item["Total Dibutuhkan"]}
+                        </TableCell>
                         <TableCell className="text-right font-mono">
                           {item["Stok Wincp (Real)"]}
                         </TableCell>
                         <TableCell className="text-right font-mono">
                           {item["Saldo Akhir"]}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-orange-600">
-                          {item["Qty Reserved (PO Lain)"]}
-                        </TableCell>
                         <TableCell className="text-right font-mono">
                           {item["Qty Available"]}
                         </TableCell>
-                        {/* RESERVED OLEH SPK */}
                         <TableCell className="text-sm whitespace-pre-wrap max-w-[250px] break-words">
                           {item["Reserved Oleh SPK"] !== "-"
                             ? item["Reserved Oleh SPK"]
@@ -3867,20 +3898,10 @@ export default function ProductionPlanPage() {
                         <TableCell className="text-right font-mono text-red-600 font-bold">
                           {item["Kekurangan"] !== "-"
                             ? item["Kekurangan"]
-                            : "-"}
+                            : "0"}
                         </TableCell>
                       </TableRow>
                     ))}
-                    {filteredAndSortedData.length === 0 && (
-                      <TableRow>
-                        <TableCell
-                          colSpan={12}
-                          className="text-center py-8 text-muted-foreground"
-                        >
-                          Tidak ada data yang sesuai
-                        </TableCell>
-                      </TableRow>
-                    )}
                   </TableBody>
                 </Table>
               </div>
