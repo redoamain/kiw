@@ -934,6 +934,7 @@ export default function ProductionPlanPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [showCommitted, setShowCommitted] = useState(true);
   const [exportProgress, setExportProgress] = useState({
     visible: false,
     current: 0,
@@ -1087,6 +1088,7 @@ export default function ProductionPlanPage() {
     startDate?: string,
     endDate?: string,
     existingCommittedPOs?: CommittedPO[],
+    showCommittedParam?: boolean, // Parameter baru
   ) => {
     try {
       setLoading(true);
@@ -1108,12 +1110,37 @@ export default function ProductionPlanPage() {
           .map((po) => po.noSPK),
       );
 
-      const filteredOrdersData = combinedOrders.filter(
-        (order) => !committedSPKs.has(order.No_SPK),
-      );
+      // 🔥 Gunakan showCommittedParam atau showCommitted dari state
+      const shouldShowCommitted =
+        showCommittedParam !== undefined ? showCommittedParam : showCommitted;
+
+      console.log(`showCommitted = ${shouldShowCommitted}`); // Debug log
+
+      let filteredOrdersData;
+      if (shouldShowCommitted) {
+        // Tampilkan SEMUA PO (termasuk yang sudah di-commit)
+        filteredOrdersData = combinedOrders;
+        console.log(
+          `Menampilkan semua PO (termasuk committed): ${combinedOrders.length} total`,
+        );
+      } else {
+        // Hanya PO yang belum di-commit
+        filteredOrdersData = combinedOrders.filter(
+          (order) => !committedSPKs.has(order.No_SPK),
+        );
+        console.log(
+          `Menampilkan PO aktif: ${filteredOrdersData.length} dari ${combinedOrders.length} total`,
+        );
+      }
 
       const productionPlans: ProductionPlan[] = filteredOrdersData.map(
         (order) => {
+          // Tandai PO yang sudah di-commit
+          const isCommitted = committedSPKs.has(order.No_SPK);
+          const commitInfo = committedList.find(
+            (po) => po.noSPK === order.No_SPK && po.status === "COMMITTED",
+          );
+
           return {
             order: {
               ...order,
@@ -1122,8 +1149,8 @@ export default function ProductionPlanPage() {
             },
             selected: false,
             loadingBom: false,
-            committed: false,
-            CommitID: undefined,
+            committed: isCommitted,
+            CommitID: commitInfo?.CommitID,
             bom: undefined,
             stock: undefined,
             stockLastUpdated: undefined,
@@ -1143,16 +1170,17 @@ export default function ProductionPlanPage() {
       setLoading(false);
     }
   };
-
   const refreshAllData = useCallback(async () => {
     showToast("Memuat ulang data...", "loading");
     setLoading(true);
     try {
       const latestCommittedPOs = await loadCommittedPOs();
+      // Kirim showCommitted ke fetchOrders
       await fetchOrders(
         dateFilter.startDate,
         dateFilter.endDate,
         latestCommittedPOs,
+        showCommitted, // Tambahkan parameter showCommitted
       );
       showToast("Data berhasil dimuat ulang", "success");
     } catch (error) {
@@ -1161,7 +1189,7 @@ export default function ProductionPlanPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFilter.startDate, dateFilter.endDate]);
+  }, [dateFilter.startDate, dateFilter.endDate, showCommitted]); // Tambahkan showCommitted ke dependensi
 
   // ==================== FUNGSI LOAD BOM UNTUK COMMIT ====================
   const loadBomForCommit = async (
@@ -1411,6 +1439,62 @@ export default function ProductionPlanPage() {
       setCommitting(null);
     }
   };
+  // ==================== FUNGSI LOAD DATA COMMITTED PO ====================
+  // Tambahkan fungsi ini SEBELUM loadBomAndStockForExport
+  const loadCommittedOrderData = async (
+    committedPO: ProductionPlan,
+  ): Promise<ProductionPlan> => {
+    try {
+      console.log(`Loading data for committed PO: ${committedPO.order.No_SPK}`);
+
+      // Ambil data BOM untuk committed PO
+      const allKodeBarang = getAllKodeBarang(committedPO.order.Kode_Barang);
+      const combinedBoms: {
+        [kodeBarang: string]: { flat: BomItem[]; tree: BomItem[] };
+      } = {};
+      let allItemIds: string[] = [];
+
+      for (const kb of allKodeBarang) {
+        try {
+          const bomResponse = await axios.get(
+            `/api/bom/ppic?itemid=${encodeURIComponent(kb)}`,
+          );
+          const treeStructure = buildTreeStructure(bomResponse.data.flat);
+          combinedBoms[kb] = {
+            flat: bomResponse.data.flat,
+            tree: treeStructure,
+          };
+          allItemIds.push(
+            ...bomResponse.data.flat.map((item: BomItem) =>
+              normalizeItemId(item.ItemID),
+            ),
+          );
+        } catch (err) {
+          console.error(`Gagal load BOM untuk ${kb}:`, err);
+        }
+      }
+
+      allItemIds = Array.from(new Set(allItemIds));
+      const stockData = await fetchStockForItemsWithCommitment(
+        allItemIds,
+        committedPO.order.Tanggal_Order,
+      );
+      const finalBom = combineBoms(combinedBoms);
+
+      return {
+        ...committedPO,
+        bom: finalBom,
+        stock: stockData,
+        stockLastUpdated: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error(
+        `Error loading data for committed PO ${committedPO.order.No_SPK}:`,
+        error,
+      );
+      return committedPO;
+    }
+  };
 
   // ==================== FUNGSI LOAD BOM & STOCK UNTUK EXPORT ====================
   const loadBomAndStockForExport = async (
@@ -1422,15 +1506,41 @@ export default function ProductionPlanPage() {
     for (let i = 0; i < updatedOrders.length; i++) {
       const order = updatedOrders[i];
 
+      console.log(
+        `Processing order ${i + 1}/${totalOrders}: ${order.order.No_SPK}, committed: ${order.committed}`,
+      );
+
+      // Jika sudah punya BOM dan stock, skip
       if (order.bom && order.stock) {
         setExportProgress((prev) => ({
           ...prev,
           current: Math.floor(((i + 1) / totalOrders) * 50),
           message: `Menggunakan BOM yang sudah ada untuk ${order.order.No_SPK} (${i + 1}/${totalOrders})...`,
         }));
+        console.log(`Using existing BOM for ${order.order.No_SPK}`);
         continue;
       }
 
+      // 🔥 TAMBAHKAN: Jika PO sudah di-commit, coba load dari database terlebih dahulu
+      if (order.committed) {
+        setExportProgress({
+          visible: true,
+          current: Math.floor((i / totalOrders) * 50),
+          total: 100,
+          message: `Memuat data untuk committed PO ${order.order.No_SPK} (${i + 1}/${totalOrders})...`,
+        });
+        console.log(`Loading committed order data for ${order.order.No_SPK}`);
+
+        const loadedOrder = await loadCommittedOrderData(order);
+        updatedOrders[i] = loadedOrder;
+        console.log(
+          `Loaded committed order data for ${order.order.No_SPK}, hasBom: ${!!loadedOrder.bom}`,
+        );
+        continue;
+      }
+
+      // Untuk PO yang belum di-commit, load seperti biasa
+      console.log(`Loading BOM for active PO ${order.order.No_SPK}`);
       setExportProgress({
         visible: true,
         current: Math.floor((i / totalOrders) * 50),
@@ -1482,6 +1592,7 @@ export default function ProductionPlanPage() {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
 
+    console.log(`Finished loading BOM for ${updatedOrders.length} orders`);
     return updatedOrders;
   };
 
@@ -1613,6 +1724,7 @@ export default function ProductionPlanPage() {
   // Gunakan fungsi ini di export (pilih salah satu)
   // Untuk amannya, gunakan fungsi iteratif
   const getAccumulatedQty = calculateAccumulatedQtyIterative;
+  // Tambahkan fungsi untuk memuat data committed PO dari database
 
   const fetchMasterDataForItems = async (
     itemIds: string[],
@@ -1689,9 +1801,13 @@ export default function ProductionPlanPage() {
 
       const today = new Date().toISOString().split("T")[0];
       const selectedOrders = filteredOrders.filter(
-        (order) => order.selected && !order.committed,
+        (order) => order.selected,
+        // && !order.committed,
       );
-
+const exportingSPKs = new Set(
+  selectedOrders.map((order) => order.order.No_SPK),
+);
+console.log("Exporting SPKs:", Array.from(exportingSPKs));
       if (selectedOrders.length === 0) {
         alert("Tidak ada PO yang dipilih untuk di-export!");
         setExportLoading(false);
@@ -2115,7 +2231,12 @@ export default function ProductionPlanPage() {
           !reservation.noSPK
         )
           continue;
-
+if (exportingSPKs.has(reservation.noSPK)) {
+  console.log(
+    `Skipping self-reservation for PO: ${reservation.noSPK}, Qty: ${reservation.reservedQty}`,
+  );
+  continue;
+}
         const itemId = normalizeItemId(reservation.itemID);
         if (!reservationsByItem.has(itemId)) {
           reservationsByItem.set(itemId, {
@@ -3047,11 +3168,9 @@ export default function ProductionPlanPage() {
 
   // ==================== FUNGSI SELECT ====================
   const toggleSelection = (index: number) => {
-    // Dapatkan data dari filteredOrders berdasarkan index
     const plan = paginatedOrders[index];
     if (!plan) return;
 
-    // Cari index asli di orders berdasarkan No_SPK
     const originalIndex = orders.findIndex(
       (o) => o.order.No_SPK === plan.order.No_SPK,
     );
@@ -3059,8 +3178,8 @@ export default function ProductionPlanPage() {
 
     setOrders((prev) =>
       prev.map((item, i) =>
-        i === originalIndex && !item.committed
-          ? { ...item, selected: !item.selected }
+        i === originalIndex
+          ? { ...item, selected: !item.selected } // Izinkan semua PO dipilih
           : item,
       ),
     );
@@ -3110,12 +3229,17 @@ export default function ProductionPlanPage() {
   };
 
   const applyDateFilter = () => {
-    fetchOrders(dateFilter.startDate, dateFilter.endDate);
+    fetchOrders(
+      dateFilter.startDate,
+      dateFilter.endDate,
+      undefined,
+      showCommitted,
+    );
   };
 
   const resetDateFilter = () => {
     setDateFilter({ startDate: "", endDate: "" });
-    fetchOrders();
+    fetchOrders(undefined, undefined, undefined, showCommitted);
   };
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3129,376 +3253,386 @@ export default function ProductionPlanPage() {
   };
 
   // ==================== FUNGSI PREVIEW EXPORT (DIPERBAIKI) ====================
-  const previewExport = async () => {
-    try {
-      setExportLoading(true);
-      setExportProgress({
-        visible: true,
-        current: 0,
-        total: 100,
-        message: "Mempersiapkan preview data...",
-      });
-      showToast("Mempersiapkan preview data dengan cek stok...", "loading");
+ const previewExport = async () => {
+   try {
+     setExportLoading(true);
+     setExportProgress({
+       visible: true,
+       current: 0,
+       total: 100,
+       message: "Mempersiapkan preview data...",
+     });
+     showToast("Mempersiapkan preview data dengan cek stok...", "loading");
 
-      const selectedOrders = filteredOrders.filter(
-        (order) => order.selected && !order.committed,
-      );
+     const selectedOrders = filteredOrders.filter((order) => order.selected);
 
-      if (selectedOrders.length === 0) {
-        alert("Tidak ada PO yang dipilih untuk di-preview!");
-        setExportLoading(false);
-        setExportProgress({
-          visible: false,
-          current: 0,
-          total: 0,
-          message: "",
-        });
-        return;
-      }
+     if (selectedOrders.length === 0) {
+       alert("Tidak ada PO yang dipilih untuk di-preview!");
+       setExportLoading(false);
+       setExportProgress({
+         visible: false,
+         current: 0,
+         total: 0,
+         message: "",
+       });
+       return;
+     }
 
-      setExportProgress({
-        visible: true,
-        current: 20,
-        total: 100,
-        message: `Memuat BOM & stok untuk ${selectedOrders.length} PO...`,
-      });
-      const ordersWithBom = await loadBomAndStockForExport(selectedOrders);
+     setExportProgress({
+       visible: true,
+       current: 20,
+       total: 100,
+       message: `Memuat BOM & stok untuk ${selectedOrders.length} PO...`,
+     });
+     const ordersWithBom = await loadBomAndStockForExport(selectedOrders);
 
-      setExportProgress({
-        visible: true,
-        current: 50,
-        total: 100,
-        message: "Mengambil data master...",
-      });
+     setExportProgress({
+       visible: true,
+       current: 50,
+       total: 100,
+       message: "Mengambil data master...",
+     });
 
-      const allMaterialIds: string[] = [];
-      for (const order of ordersWithBom) {
-        if (order.bom?.flat) {
-          order.bom.flat.forEach((item: BomItem) => {
-            if (item.ItemID && Number(item.Level) > 0)
-              allMaterialIds.push(normalizeItemId(item.ItemID));
-          });
-        }
-      }
-      const masterDataMap = await fetchMasterDataForItems(allMaterialIds);
+     const allMaterialIds: string[] = [];
+     for (const order of ordersWithBom) {
+       if (order.bom?.flat) {
+         order.bom.flat.forEach((item: BomItem) => {
+           if (item.ItemID && Number(item.Level) > 0)
+             allMaterialIds.push(normalizeItemId(item.ItemID));
+         });
+       }
+     }
+     const masterDataMap = await fetchMasterDataForItems(allMaterialIds);
 
-      setExportProgress({
-        visible: true,
-        current: 70,
-        total: 100,
-        message: "Menghitung kebutuhan & reserved stock...",
-      });
+     setExportProgress({
+       visible: true,
+       current: 70,
+       total: 100,
+       message: "Menghitung kebutuhan & reserved stock...",
+     });
 
-      // BUAT MAP UNTUK RESERVED STOCK DARI COMMITTED PO
-      const reservationsByItem = new Map<
-        string,
-        {
-          totalQty: number;
-          spkList: Set<{
-            namaPO: string;
-            qtyReserved: number;
-          }>;
-          itemName: string;
-        }
-      >();
+     // 🔥 BUAT SET UNTUK MENAMPUNG SPK YANG SEDANG DIPREVIEW
+     const exportingSPKs = new Set(
+       selectedOrders.map((order) => order.order.No_SPK),
+     );
+     console.log(
+       "Preview SPKs (excluding self-reservation):",
+       Array.from(exportingSPKs),
+     );
 
-      for (const reservation of stockReservations) {
-        if (
-          reservation.status !== "RESERVED" ||
-          reservation.reservedQty <= 0 ||
-          !reservation.noSPK
-        )
-          continue;
+     // 🔥 HANYA SATU DEKLARASI reservationsByItem (dengan filter)
+     const reservationsByItem = new Map<
+       string,
+       {
+         totalQty: number;
+         spkList: Set<{
+           namaPO: string;
+           qtyReserved: number;
+         }>;
+         itemName: string;
+       }
+     >();
 
-        const itemId = normalizeItemId(reservation.itemID);
-        if (!reservationsByItem.has(itemId)) {
-          reservationsByItem.set(itemId, {
-            totalQty: 0,
-            spkList: new Set(),
-            itemName: reservation.itemName || itemId,
-          });
-        }
+     for (const reservation of stockReservations) {
+       if (
+         reservation.status !== "RESERVED" ||
+         reservation.reservedQty <= 0 ||
+         !reservation.noSPK
+       )
+         continue;
 
-        const itemData = reservationsByItem.get(itemId)!;
-        itemData.totalQty += reservation.reservedQty;
+       // 🔥 LEWATKAN RESERVATION UNTUK PO YANG SEDANG DIPREVIEW
+       if (exportingSPKs.has(reservation.noSPK)) {
+         console.log(
+           `Skipping self-reservation for PO: ${reservation.noSPK}, Qty: ${reservation.reservedQty}`,
+         );
+         continue;
+       }
 
-        const namaPO = reservation.namaPO || reservation.noSPK;
+       const itemId = normalizeItemId(reservation.itemID);
+       if (!reservationsByItem.has(itemId)) {
+         reservationsByItem.set(itemId, {
+           totalQty: 0,
+           spkList: new Set(),
+           itemName: reservation.itemName || itemId,
+         });
+       }
 
-        let existing: { namaPO: string; qtyReserved: number } | undefined;
-        for (const item of itemData.spkList) {
-          if (item.namaPO === namaPO) {
-            existing = item;
-            break;
-          }
-        }
+       const itemData = reservationsByItem.get(itemId)!;
+       itemData.totalQty += reservation.reservedQty;
 
-        if (existing) {
-          existing.qtyReserved += reservation.reservedQty;
-        } else {
-          itemData.spkList.add({
-            namaPO: namaPO,
-            qtyReserved: reservation.reservedQty,
-          });
-        }
-      }
+       const namaPO = reservation.namaPO || reservation.noSPK;
 
-      // FUNGSI CALCULATE ACCUMULATED QTY
-      const calculateAccumulatedQtyForMaterial = (
-        flatBom: BomItem[],
-      ): Map<string, number> => {
-        const cache = new Map<string, number>();
-        const itemMap = new Map<string, BomItem>();
+       let existing: { namaPO: string; qtyReserved: number } | undefined;
+       for (const item of itemData.spkList) {
+         if (item.namaPO === namaPO) {
+           existing = item;
+           break;
+         }
+       }
 
-        for (const item of flatBom) {
-          itemMap.set(normalizeItemId(item.ItemID), item);
-        }
+       if (existing) {
+         existing.qtyReserved += reservation.reservedQty;
+       } else {
+         itemData.spkList.add({
+           namaPO: namaPO,
+           qtyReserved: reservation.reservedQty,
+         });
+       }
+     }
 
-        for (const item of flatBom) {
-          const itemId = normalizeItemId(item.ItemID);
-          const level = Number(item.Level);
+     // FUNGSI CALCULATE ACCUMULATED QTY
+     const calculateAccumulatedQtyForMaterial = (
+       flatBom: BomItem[],
+     ): Map<string, number> => {
+       const cache = new Map<string, number>();
+       const itemMap = new Map<string, BomItem>();
 
-          if (level === 1) {
-            cache.set(itemId, item.Qty);
-          } else {
-            let parent: BomItem | undefined = undefined;
+       for (const item of flatBom) {
+         itemMap.set(normalizeItemId(item.ItemID), item);
+       }
 
-            if (item.ParentItemID) {
-              parent = itemMap.get(normalizeItemId(item.ParentItemID));
-            }
+       for (const item of flatBom) {
+         const itemId = normalizeItemId(item.ItemID);
+         const level = Number(item.Level);
 
-            if (!parent) {
-              parent = flatBom.find((p) => Number(p.Level) === level - 1);
-            }
+         if (level === 1) {
+           cache.set(itemId, item.Qty);
+         } else {
+           let parent: BomItem | undefined = undefined;
 
-            if (parent) {
-              const parentId = normalizeItemId(parent.ItemID);
-              const parentAccumulated = cache.get(parentId);
-              if (parentAccumulated !== undefined) {
-                cache.set(itemId, item.Qty * parentAccumulated);
-              } else {
-                cache.set(itemId, item.Qty);
-              }
-            } else {
-              cache.set(itemId, item.Qty);
-            }
-          }
-        }
-        return cache;
-      };
+           if (item.ParentItemID) {
+             parent = itemMap.get(normalizeItemId(item.ParentItemID));
+           }
 
-      // MATERIAL AGGREGATION MAP
-      const materialAggMap = new Map<string, any>();
+           if (!parent) {
+             parent = flatBom.find((p) => Number(p.Level) === level - 1);
+           }
 
-      for (const order of ordersWithBom) {
-        if (!order.bom || !order.stock) continue;
+           if (parent) {
+             const parentId = normalizeItemId(parent.ItemID);
+             const parentAccumulated = cache.get(parentId);
+             if (parentAccumulated !== undefined) {
+               cache.set(itemId, item.Qty * parentAccumulated);
+             } else {
+               cache.set(itemId, item.Qty);
+             }
+           } else {
+             cache.set(itemId, item.Qty);
+           }
+         }
+       }
+       return cache;
+     };
 
-        const isCombined =
-          order.order.combinedItems && order.order.combinedItems.length > 1;
-        const barangJadiItems: Array<{
-          kode: string;
-          qty: number;
-          nama: string;
-        }> = [];
+     // MATERIAL AGGREGATION MAP
+     const materialAggMap = new Map<string, any>();
 
-        if (isCombined && order.order.combinedItems) {
-          order.order.combinedItems.forEach((item) =>
-            barangJadiItems.push({
-              kode: item.Kode_Barang,
-              qty: item.QTY,
-              nama: item.Nama_PO,
-            }),
-          );
-        } else {
-          barangJadiItems.push({
-            kode: order.order.Kode_Barang,
-            qty: order.order.QTY,
-            nama: order.order.Nama_PO,
-          });
-        }
+     for (const order of ordersWithBom) {
+       if (!order.bom || !order.stock) continue;
 
-        for (const barangJadi of barangJadiItems) {
-          let bomFlat: BomItem[] = [];
-          if (isCombined && order.bom?.combinedBoms) {
-            const bomItem = order.bom.combinedBoms[barangJadi.kode];
-            if (bomItem) bomFlat = bomItem.flat;
-          } else {
-            bomFlat = order.bom.flat;
-          }
+       const isCombined =
+         order.order.combinedItems && order.order.combinedItems.length > 1;
+       const barangJadiItems: Array<{
+         kode: string;
+         qty: number;
+         nama: string;
+       }> = [];
 
-          if (bomFlat.length === 0) continue;
+       if (isCombined && order.order.combinedItems) {
+         order.order.combinedItems.forEach((item) =>
+           barangJadiItems.push({
+             kode: item.Kode_Barang,
+             qty: item.QTY,
+             nama: item.Nama_PO,
+           }),
+         );
+       } else {
+         barangJadiItems.push({
+           kode: order.order.Kode_Barang,
+           qty: order.order.QTY,
+           nama: order.order.Nama_PO,
+         });
+       }
 
-          const components = bomFlat.filter(
-            (b) => Number(b.Level) > 0 && !isINJECTIONDepartment(b.Departemen),
-          );
+       for (const barangJadi of barangJadiItems) {
+         let bomFlat: BomItem[] = [];
+         if (isCombined && order.bom?.combinedBoms) {
+           const bomItem = order.bom.combinedBoms[barangJadi.kode];
+           if (bomItem) bomFlat = bomItem.flat;
+         } else {
+           bomFlat = order.bom.flat;
+         }
 
-          if (components.length === 0) continue;
+         if (bomFlat.length === 0) continue;
 
-          const accumulatedMap = calculateAccumulatedQtyForMaterial(bomFlat);
-          const tempNeeds = new Map<string, number>();
+         const components = bomFlat.filter(
+           (b) => Number(b.Level) > 0 && !isINJECTIONDepartment(b.Departemen),
+         );
 
-          for (const component of components) {
-            const materialId = normalizeItemId(component.ItemID);
-            const accumulatedQty =
-              accumulatedMap.get(materialId) || component.Qty;
-            const needed = accumulatedQty * barangJadi.qty;
-            tempNeeds.set(
-              materialId,
-              (tempNeeds.get(materialId) || 0) + needed,
-            );
-          }
+         if (components.length === 0) continue;
 
-          for (const [materialId, needed] of tempNeeds) {
-            const masterInfo = masterDataMap.get(materialId) || {
-              spec: "-",
-              warna: "-",
-              bahan: "-",
-            };
+         const accumulatedMap = calculateAccumulatedQtyForMaterial(bomFlat);
+         const tempNeeds = new Map<string, number>();
 
-            const stockItem = order.stock.find(
-              (s) => normalizeItemId(s.itemid) === materialId,
-            );
+         for (const component of components) {
+           const materialId = normalizeItemId(component.ItemID);
+           const accumulatedQty =
+             accumulatedMap.get(materialId) || component.Qty;
+           const needed = accumulatedQty * barangJadi.qty;
+           tempNeeds.set(materialId, (tempNeeds.get(materialId) || 0) + needed);
+         }
 
-            const stockWincp = stockItem?.physicalStock || 0;
-            const stockAkhir = stockItem?.stockAkhir || 0;
+         for (const [materialId, needed] of tempNeeds) {
+           const masterInfo = masterDataMap.get(materialId) || {
+             spec: "-",
+             warna: "-",
+             bahan: "-",
+           };
 
-            const reservedData = reservationsByItem.get(materialId);
-            const qtyReservedFromOtherPO = reservedData?.totalQty || 0;
+           const stockItem = order.stock.find(
+             (s) => normalizeItemId(s.itemid) === materialId,
+           );
 
-            const reservedByText = reservedData
-              ? Array.from(reservedData.spkList)
-                  .map(
-                    (item) =>
-                      `${item.namaPO} (${item.qtyReserved.toLocaleString()})`,
-                  )
-                  .join("\n")
-              : "-";
+           const stockWincp = stockItem?.physicalStock || 0;
+           const stockAkhir = stockItem?.stockAkhir || 0;
 
-            const component = components.find(
-              (c) => normalizeItemId(c.ItemID) === materialId,
-            );
+           const reservedData = reservationsByItem.get(materialId);
+           const qtyReservedFromOtherPO = reservedData?.totalQty || 0;
 
-            if (!materialAggMap.has(materialId)) {
-              materialAggMap.set(materialId, {
-                kode: materialId,
-                nama: component?.ItemName || materialId,
-                nama_china: component?.ItemName2 || "-",
-                spec: masterInfo.spec,
-                warna: masterInfo.warna,
-                bahan: masterInfo.bahan,
-                departemen: component?.Departemen || "UNKNOWN",
-                totalNeeded: 0,
-                stockWincp: stockWincp,
-                stockAkhir: stockAkhir,
-                qtyReserved: qtyReservedFromOtherPO,
-                reservedBy: reservedByText,
-                barangJadiSet: new Map(),
-              });
-            }
+           const reservedByText = reservedData
+             ? Array.from(reservedData.spkList)
+                 .map(
+                   (item) =>
+                     `${item.namaPO} (${item.qtyReserved.toLocaleString()})`,
+                 )
+                 .join("\n")
+             : "-";
 
-            const agg = materialAggMap.get(materialId);
-            agg.totalNeeded += needed;
+           const component = components.find(
+             (c) => normalizeItemId(c.ItemID) === materialId,
+           );
 
-            if (!agg.barangJadiSet.has(barangJadi.kode)) {
-              agg.barangJadiSet.set(barangJadi.kode, {
-                qty: barangJadi.qty,
-                nama: barangJadi.nama,
-                kode: barangJadi.kode,
-              });
-            }
-          }
-        }
-      }
+           if (!materialAggMap.has(materialId)) {
+             materialAggMap.set(materialId, {
+               kode: materialId,
+               nama: component?.ItemName || materialId,
+               nama_china: component?.ItemName2 || "-",
+               spec: masterInfo.spec,
+               warna: masterInfo.warna,
+               bahan: masterInfo.bahan,
+               departemen: component?.Departemen || "UNKNOWN",
+               totalNeeded: 0,
+               stockWincp: stockWincp,
+               stockAkhir: stockAkhir,
+               qtyReserved: qtyReservedFromOtherPO,
+               reservedBy: reservedByText,
+               barangJadiSet: new Map(),
+             });
+           }
 
-      // 🔥 BUAT PREVIEW DATA DENGAN RUMUS YANG BENAR
-      const previewMaterialData: any[] = [];
+           const agg = materialAggMap.get(materialId);
+           agg.totalNeeded += needed;
 
-      for (const agg of materialAggMap.values()) {
-        const barangJadiDetails: string[] = [];
-        for (const [kode, info] of agg.barangJadiSet) {
-          barangJadiDetails.push(`${kode} (${info.qty.toLocaleString()})`);
-        }
+           if (!agg.barangJadiSet.has(barangJadi.kode)) {
+             agg.barangJadiSet.set(barangJadi.kode, {
+               qty: barangJadi.qty,
+               nama: barangJadi.nama,
+               kode: barangJadi.kode,
+             });
+           }
+         }
+       }
+     }
 
-        const variantInfo = getVariantInfo(agg.kode);
+     // 🔥 BUAT PREVIEW DATA
+     const previewMaterialData: any[] = [];
 
-        // 🔥 RUMUS YANG BENAR:
-        const totalDibutuhkan = agg.totalNeeded + agg.qtyReserved; // Kebutuhan + Reserved PO Lain
-        const available = agg.stockWincp - totalDibutuhkan; // Stok - Total Dibutuhkan (bisa negatif)
-        const kekurangan = totalDibutuhkan - agg.stockWincp; // Total Dibutuhkan - Stok (positif jika kurang)
+     for (const agg of materialAggMap.values()) {
+       const barangJadiDetails: string[] = [];
+       for (const [kode, info] of agg.barangJadiSet) {
+         barangJadiDetails.push(`${kode} (${info.qty.toLocaleString()})`);
+       }
 
-        // Tentukan status
-        let status = "";
-        if (agg.stockWincp >= totalDibutuhkan) {
-          status = "AMAN";
-        } else if (agg.stockWincp > 0) {
-          status = "KURANG";
-        } else {
-          status = "HABIS";
-        }
+       const variantInfo = getVariantInfo(agg.kode);
 
-        previewMaterialData.push({
-          "Kode Material": agg.kode,
-          "Nama Material": agg.nama,
-          "Nama China": agg.nama_china,
-          Spesifikasi: agg.spec,
-          Warna: agg.warna,
-          Bahan: agg.bahan,
-          Departemen: agg.departemen,
-          "Barang Jadi": barangJadiDetails.join("\n"),
-          "Total Kebutuhan": agg.totalNeeded.toLocaleString(),
-          "Stok Wincp (Real)": agg.stockWincp.toLocaleString(),
-          "Saldo Akhir": agg.stockAkhir.toLocaleString(),
-          "Qty Reserved (PO Lain)": agg.qtyReserved.toLocaleString(),
-          "Total Dibutuhkan": totalDibutuhkan.toLocaleString(),
-          "Qty Available": available.toLocaleString(), // Bisa negatif, menandakan stok kurang
-          "Reserved Oleh SPK": agg.reservedBy,
-          "Keterangan Variant": variantInfo,
-          "Status Stock": status,
-          Kekurangan: kekurangan > 0 ? kekurangan.toLocaleString() : "0",
-        });
-      }
+       const totalDibutuhkan = agg.totalNeeded + agg.qtyReserved;
+       const available = agg.stockWincp - totalDibutuhkan;
+       const kekurangan = totalDibutuhkan - agg.stockWincp;
 
-      previewMaterialData.sort((a, b) =>
-        a["Kode Material"].localeCompare(b["Kode Material"]),
-      );
+       let status = "";
+       if (agg.stockWincp >= totalDibutuhkan) {
+         status = "AMAN";
+       } else if (agg.stockWincp > 0) {
+         status = "KURANG";
+       } else {
+         status = "HABIS";
+       }
 
-      let fileName = "";
-      if (selectedOrders.length === 1) {
-        const singlePO = selectedOrders[0];
-        const poName = singlePO.order.Nama_PO || singlePO.order.No_SPK;
-        fileName = poName
-          .replace(/[\\/*?:"<>|]/g, "")
-          .replace(/\s+/g, "_")
-          .substring(0, 50);
-      } else {
-        const firstPO = selectedOrders[0];
-        const firstPOName = firstPO.order.Nama_PO || firstPO.order.No_SPK;
-        fileName = firstPOName
-          .replace(/[\\/*?:"<>|]/g, "")
-          .replace(/\s+/g, "_")
-          .substring(0, 40);
-      }
+       previewMaterialData.push({
+         "Kode Material": agg.kode,
+         "Nama Material": agg.nama,
+         "Nama China": agg.nama_china,
+         Spesifikasi: agg.spec,
+         Warna: agg.warna,
+         Bahan: agg.bahan,
+         Departemen: agg.departemen,
+         "Barang Jadi": barangJadiDetails.join("\n"),
+         "Total Kebutuhan": agg.totalNeeded.toLocaleString(),
+         "Stok Wincp (Real)": agg.stockWincp.toLocaleString(),
+         "Saldo Akhir": agg.stockAkhir.toLocaleString(),
+         "Qty Reserved (PO Lain)": agg.qtyReserved.toLocaleString(),
+         "Total Dibutuhkan": totalDibutuhkan.toLocaleString(),
+         "Qty Available": available.toLocaleString(),
+         "Reserved Oleh SPK": agg.reservedBy,
+         "Keterangan Variant": variantInfo,
+         "Status Stock": status,
+         Kekurangan: kekurangan > 0 ? kekurangan.toLocaleString() : "0",
+       });
+     }
 
-      setPreviewDialog({
-        open: true,
-        data: previewMaterialData,
-        fileName: fileName,
-        totalPO: selectedOrders.length,
-        totalMaterial: previewMaterialData.length,
-      });
+     previewMaterialData.sort((a, b) =>
+       a["Kode Material"].localeCompare(b["Kode Material"]),
+     );
 
-      setExportProgress({ visible: false, current: 0, total: 0, message: "" });
-      showToast("Preview siap dengan informasi stok lengkap", "success");
-    } catch (error) {
-      console.error("Error preview:", error);
-      showToast(
-        `❌ Gagal preview: ${error instanceof Error ? error.message : "Unknown error"}`,
-        "error",
-      );
-    } finally {
-      setExportLoading(false);
-      setExportProgress({ visible: false, current: 0, total: 0, message: "" });
-    }
-  };
+     let fileName = "";
+     if (selectedOrders.length === 1) {
+       const singlePO = selectedOrders[0];
+       const poName = singlePO.order.Nama_PO || singlePO.order.No_SPK;
+       fileName = poName
+         .replace(/[\\/*?:"<>|]/g, "")
+         .replace(/\s+/g, "_")
+         .substring(0, 50);
+     } else {
+       const firstPO = selectedOrders[0];
+       const firstPOName = firstPO.order.Nama_PO || firstPO.order.No_SPK;
+       fileName = firstPOName
+         .replace(/[\\/*?:"<>|]/g, "")
+         .replace(/\s+/g, "_")
+         .substring(0, 40);
+     }
+
+     setPreviewDialog({
+       open: true,
+       data: previewMaterialData,
+       fileName: fileName,
+       totalPO: selectedOrders.length,
+       totalMaterial: previewMaterialData.length,
+     });
+
+     setExportProgress({ visible: false, current: 0, total: 0, message: "" });
+     showToast("Preview siap dengan informasi stok lengkap", "success");
+   } catch (error) {
+     console.error("Error preview:", error);
+     showToast(
+       `❌ Gagal preview: ${error instanceof Error ? error.message : "Unknown error"}`,
+       "error",
+     );
+   } finally {
+     setExportLoading(false);
+     setExportProgress({ visible: false, current: 0, total: 0, message: "" });
+   }
+ };
 
   const PreviewDialog: React.FC<{
     open: boolean;
@@ -3905,14 +4039,18 @@ export default function ProductionPlanPage() {
   }, [filteredOrders, currentPage, itemsPerPage]);
 
   const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
-  const selectedCount = orders.filter((p) => p.selected && !p.committed).length;
+  const selectedCount = orders.filter((p) => p.selected).length;
   const totalActiveOrders = orders.filter((p) => !p.committed).length;
   const committedCount = orders.filter((p) => p.committed).length;
 
   useEffect(() => {
     refreshAllData();
   }, []);
-
+  useEffect(() => {
+    if (isMounted) {
+      refreshAllData();
+    }
+  }, [showCommitted]);
   // Prevent hydration mismatch
   if (!isMounted) {
     return (
@@ -3998,6 +4136,7 @@ export default function ProductionPlanPage() {
             Commit PO akan mereserve stok | Uncommit akan mengembalikan stok
           </p>
         </div>
+        {/* Header buttons - update teks */}
         <div className="flex gap-2">
           <Button onClick={refreshAllData} disabled={loading} variant="outline">
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />{" "}
@@ -4139,12 +4278,34 @@ export default function ProductionPlanPage() {
       </div>
 
       {/* Selection Controls */}
+      {/* Di dalam JSX, sekitar selection controls */}
       <Card>
         <CardHeader className="flex flex-row justify-between items-center flex-wrap gap-2">
           <CardTitle className="flex items-center gap-2">
             <Package className="h-5 w-5" /> Daftar Production Order
           </CardTitle>
           <div className="flex gap-2">
+            {/* 🔥 TOMBOL TOGGLE SHOW COMMITTED */}
+            <Button
+              variant={showCommitted ? "default" : "outline"}
+              size="sm"
+              onClick={() => {
+                console.log(
+                  "Toggling showCommitted from",
+                  showCommitted,
+                  "to",
+                  !showCommitted,
+                );
+                setShowCommitted(!showCommitted);
+                // Tidak perlu panggil refreshAllData karena useEffect akan handle
+                // Tapi jika useEffect tidak jalan, panggil manual:
+                // refreshAllData();
+              }}
+              className="gap-2"
+            >
+              <Eye className="h-4 w-4" />
+              {showCommitted ? "Sembunyikan Committed" : "Tampilkan Committed"}
+            </Button>
             <Button variant="outline" onClick={toggleSelectAll}>
               Select Page
             </Button>
@@ -4204,18 +4365,30 @@ export default function ProductionPlanPage() {
                     return (
                       <TableRow
                         key={`${plan.order.No_SPK}-${idx}`}
-                        className={isCombined ? "bg-purple-50" : ""}
+                        className={`
+    ${isCombined ? "bg-purple-50" : ""}
+    ${plan.committed ? "bg-green-50 opacity-70" : ""}
+  `}
                       >
                         <TableCell className="w-[50px] align-top">
                           <Checkbox
                             checked={plan.selected}
                             onCheckedChange={() => toggleSelection(idx)}
-                            disabled={plan.committed}
+                            // disabled={plan.committed}
                           />
                         </TableCell>
+
                         <TableCell className="w-[130px] align-top font-medium">
                           <div className="whitespace-nowrap">
                             {plan.order.No_SPK}
+                            {plan.committed && (
+                              <Badge
+                                variant="default"
+                                className="ml-2 bg-green-500 text-white"
+                              >
+                                COMMITTED
+                              </Badge>
+                            )}
                           </div>
                           <div className="flex flex-wrap gap-1 mt-1">
                             {isCombined && (
@@ -4234,11 +4407,21 @@ export default function ProductionPlanPage() {
                                 BOM Ready
                               </Badge>
                             )}
+                            {plan.committed && plan.CommitID && (
+                              <Badge
+                                variant="outline"
+                                className="bg-green-100 text-green-800 whitespace-nowrap"
+                              >
+                                ID: {plan.CommitID}
+                              </Badge>
+                            )}
                           </div>
                         </TableCell>
+
                         <TableCell className="w-[100px] align-top whitespace-nowrap">
                           {plan.order.Tanggal_Order}
                         </TableCell>
+
                         <TableCell className="align-top">
                           <div
                             className="font-medium truncate max-w-[250px]"
@@ -4262,20 +4445,32 @@ export default function ProductionPlanPage() {
                         </TableCell>
 
                         <TableCell className="w-[120px] align-top text-center">
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={() => commitPO(idx)}
-                            disabled={isCommitting}
-                            className="gap-1 whitespace-nowrap"
-                          >
-                            {isCommitting ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
+                          {plan.committed ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              disabled
+                              className="gap-1 whitespace-nowrap"
+                            >
                               <Lock className="h-3 w-3" />
-                            )}
-                            {isCommitting ? "Committing..." : "Commit PO"}
-                          </Button>
+                              Committed
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={() => commitPO(idx)}
+                              disabled={isCommitting}
+                              className="gap-1 whitespace-nowrap"
+                            >
+                              {isCommitting ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Lock className="h-3 w-3" />
+                              )}
+                              {isCommitting ? "Committing..." : "Commit PO"}
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
