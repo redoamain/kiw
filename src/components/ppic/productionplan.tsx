@@ -3128,7 +3128,7 @@ export default function ProductionPlanPage() {
     setCurrentPage(1);
   };
 
-  // ==================== FUNGSI PREVIEW EXPORT (DIPERBAIKI - LANGSUNG PAKAI DATA DARI ordersWithBom) ====================
+  // ==================== FUNGSI PREVIEW EXPORT (DIPERBAIKI) ====================
   const previewExport = async () => {
     try {
       setExportLoading(true);
@@ -3140,7 +3140,6 @@ export default function ProductionPlanPage() {
       });
       showToast("Mempersiapkan preview data dengan cek stok...", "loading");
 
-      const today = new Date().toISOString().split("T")[0];
       const selectedOrders = filteredOrders.filter(
         (order) => order.selected && !order.committed,
       );
@@ -3190,7 +3189,7 @@ export default function ProductionPlanPage() {
         message: "Menghitung kebutuhan & reserved stock...",
       });
 
-      // 🔥 BUAT MAP UNTUK RESERVED STOCK DARI COMMITTED PO (sama seperti di export)
+      // BUAT MAP UNTUK RESERVED STOCK DARI COMMITTED PO
       const reservationsByItem = new Map<
         string,
         {
@@ -3243,7 +3242,7 @@ export default function ProductionPlanPage() {
         }
       }
 
-      // 🔥 FUNGSI CALCULATE ACCUMULATED QTY (sama seperti di export)
+      // FUNGSI CALCULATE ACCUMULATED QTY
       const calculateAccumulatedQtyForMaterial = (
         flatBom: BomItem[],
       ): Map<string, number> => {
@@ -3287,7 +3286,7 @@ export default function ProductionPlanPage() {
         return cache;
       };
 
-      // 🔥 MATERIAL AGGREGATION MAP - LANGSUNG PAKAI order.stock (sama seperti di export)
+      // MATERIAL AGGREGATION MAP
       const materialAggMap = new Map<string, any>();
 
       for (const order of ordersWithBom) {
@@ -3355,7 +3354,6 @@ export default function ProductionPlanPage() {
               bahan: "-",
             };
 
-            // 🔥🔥🔥 LANGSUNG PAKAI DATA STOCK DARI order.stock (SAMA KAYAK DI EXPORT) 🔥🔥🔥
             const stockItem = order.stock.find(
               (s) => normalizeItemId(s.itemid) === materialId,
             );
@@ -3400,12 +3398,6 @@ export default function ProductionPlanPage() {
             const agg = materialAggMap.get(materialId);
             agg.totalNeeded += needed;
 
-            // Update stock values
-            if (stockWincp > agg.stockWincp) agg.stockWincp = stockWincp;
-            if (stockAkhir > agg.stockAkhir) agg.stockAkhir = stockAkhir;
-            agg.qtyReserved = qtyReservedFromOtherPO;
-            agg.reservedBy = reservedByText;
-
             if (!agg.barangJadiSet.has(barangJadi.kode)) {
               agg.barangJadiSet.set(barangJadi.kode, {
                 qty: barangJadi.qty,
@@ -3417,44 +3409,7 @@ export default function ProductionPlanPage() {
         }
       }
 
-      // 🔥 HITUNG STATUS STOCK
-      // Di dalam fungsi previewExport, perbaiki bagian perhitungan status stock:
-
-      // 🔥 HITUNG STATUS STOCK dengan rumus yang benar
-      const getStockStatus = (
-        stockWincp: number,
-        totalNeeded: number,
-        qtyReserved: number,
-      ) => {
-        // Rumus: Kekurangan = (Total Kebutuhan + Reserved PO Lain) - Stok Wincp
-        const totalDibutuhkan = totalNeeded + qtyReserved;
-        const shortage = totalDibutuhkan - stockWincp;
-
-        if (stockWincp >= totalDibutuhkan) {
-          return {
-            status: "AMAN",
-            color: "text-green-600",
-            shortage: 0,
-            totalDibutuhkan: totalDibutuhkan,
-          };
-        } else if (stockWincp > 0) {
-          return {
-            status: "KURANG",
-            color: "text-orange-600",
-            shortage: shortage,
-            totalDibutuhkan: totalDibutuhkan,
-          };
-        } else {
-          return {
-            status: "HABIS",
-            color: "text-red-600",
-            shortage: totalDibutuhkan,
-            totalDibutuhkan: totalDibutuhkan,
-          };
-        }
-      };
-
-      // 🔥 BUAT PREVIEW DATA
+      // 🔥 BUAT PREVIEW DATA DENGAN RUMUS YANG BENAR
       const previewMaterialData: any[] = [];
 
       for (const agg of materialAggMap.values()) {
@@ -3464,13 +3419,21 @@ export default function ProductionPlanPage() {
         }
 
         const variantInfo = getVariantInfo(agg.kode);
-        // Panggil getStockStatus dengan 3 parameter
-        const stockStatus = getStockStatus(
-          agg.stockWincp,
-          agg.totalNeeded,
-          agg.qtyReserved,
-        );
-        const remainingStock = agg.stockWincp - stockStatus.totalDibutuhkan;
+
+        // 🔥 RUMUS YANG BENAR:
+        const totalDibutuhkan = agg.totalNeeded + agg.qtyReserved; // Kebutuhan + Reserved PO Lain
+        const available = agg.stockWincp - totalDibutuhkan; // Stok - Total Dibutuhkan (bisa negatif)
+        const kekurangan = totalDibutuhkan - agg.stockWincp; // Total Dibutuhkan - Stok (positif jika kurang)
+
+        // Tentukan status
+        let status = "";
+        if (agg.stockWincp >= totalDibutuhkan) {
+          status = "AMAN";
+        } else if (agg.stockWincp > 0) {
+          status = "KURANG";
+        } else {
+          status = "HABIS";
+        }
 
         previewMaterialData.push({
           "Kode Material": agg.kode,
@@ -3485,19 +3448,12 @@ export default function ProductionPlanPage() {
           "Stok Wincp (Real)": agg.stockWincp.toLocaleString(),
           "Saldo Akhir": agg.stockAkhir.toLocaleString(),
           "Qty Reserved (PO Lain)": agg.qtyReserved.toLocaleString(),
-          "Total Dibutuhkan": stockStatus.totalDibutuhkan.toLocaleString(),
-          "Qty Available": (agg.stockWincp - agg.qtyReserved).toLocaleString(),
+          "Total Dibutuhkan": totalDibutuhkan.toLocaleString(),
+          "Qty Available": available.toLocaleString(), // Bisa negatif, menandakan stok kurang
           "Reserved Oleh SPK": agg.reservedBy,
           "Keterangan Variant": variantInfo,
-          "Status Stock": stockStatus.status,
-          Kekurangan:
-            stockStatus.shortage > 0
-              ? stockStatus.shortage.toLocaleString()
-              : "0",
-          "Sisa Setelah Kebutuhan":
-            remainingStock >= 0
-              ? remainingStock.toLocaleString()
-              : `(${Math.abs(remainingStock).toLocaleString()})`,
+          "Status Stock": status,
+          Kekurangan: kekurangan > 0 ? kekurangan.toLocaleString() : "0",
         });
       }
 
@@ -3756,7 +3712,6 @@ export default function ProductionPlanPage() {
                 style={{ maxHeight: "calc(90vh - 280px)" }}
               >
                 <Table>
-                
                   <TableHeader className="sticky top-0 bg-gray-50 z-10">
                     <TableRow>
                       <TableHead
