@@ -70,7 +70,9 @@ import {
   Info,
   TreePine,
   Table as TableIcon,
-  ChevronUp, ChevronDown, ChevronsUpDown
+  ChevronUp, ChevronDown, ChevronsUpDown,
+  Database,
+  Trash2
 } from "lucide-react";
 // Import itemsWithVariants di bagian atas file
 import {
@@ -918,7 +920,355 @@ const CommittedPOsPanel: React.FC<{
 
 // ==================== KOMPONEN PREVIEW DIALOG ====================
 
+// Komponen HistoryPanel dengan Sheet (bukan modal)
+const HistoryPanel: React.FC<{
+  calculations: any[];
+  onLoadCalculation: (calculation: any) => void;
+  onRefresh: () => void;
+  onDeleteCalculation?: (calculationId: string) => void;
+}> = ({ calculations, onLoadCalculation, onRefresh, onDeleteCalculation }) => {
+  const [expanded, setExpanded] = useState(true); // Default expanded
+  const [selectedCalc, setSelectedCalc] = useState<any>(null);
+  const [detailSheetOpen, setDetailSheetOpen] = useState(false);
+  const [searchHistory, setSearchHistory] = useState("");
+  const [dateFilter, setDateFilter] = useState("");
 
+  // Filter history berdasarkan search
+  const filteredCalculations = useMemo(() => {
+    if (!calculations.length) return [];
+    
+    let filtered = [...calculations];
+    
+    if (searchHistory) {
+      const term = searchHistory.toLowerCase();
+      filtered = filtered.filter(
+        (calc) =>
+          calc.calculation_id?.toLowerCase().includes(term) ||
+          calc.user_id?.toLowerCase().includes(term) ||
+          calc.notes?.toLowerCase().includes(term)
+      );
+    }
+    
+    if (dateFilter) {
+      filtered = filtered.filter(
+        (calc) => calc.calculation_date?.split("T")[0] === dateFilter
+      );
+    }
+    
+    return filtered;
+  }, [calculations, searchHistory, dateFilter]);
+
+  const getStatusSummary = (calc: any) => {
+    const total = calc.material_aman + calc.material_kurang + calc.material_habis;
+    const amanPercent = total > 0 ? (calc.material_aman / total) * 100 : 0;
+    return { total, amanPercent };
+  };
+
+  if (!expanded) {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <CardTitle className="flex items-center gap-2 cursor-pointer" onClick={() => setExpanded(true)}>
+              <Database className="h-5 w-5" />
+              History Perhitungan Material Tersimpan
+              <Badge variant="secondary" className="ml-2">
+                {calculations.length} Data
+              </Badge>
+            </CardTitle>
+            <Button variant="outline" size="sm" onClick={() => setExpanded(true)}>
+              <Eye className="h-4 w-4 mr-2" />
+              Tampilkan History
+            </Button>
+          </div>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <div className="flex justify-between items-center flex-wrap gap-4">
+            <CardTitle className="flex items-center gap-2">
+              <Database className="h-5 w-5" />
+              History Perhitungan Material (Tersimpan di Database)
+              <Badge variant="secondary" className="ml-2">
+                {calculations.length} Data
+              </Badge>
+            </CardTitle>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={onRefresh}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Refresh
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setExpanded(false)}>
+                Sembunyikan
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {/* Filter Section */}
+          <div className="flex gap-4 mb-4 flex-wrap">
+            <div className="flex-1 relative min-w-[200px]">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Cari ID Perhitungan atau User..."
+                value={searchHistory}
+                onChange={(e) => setSearchHistory(e.target.value)}
+                className="pl-8"
+              />
+            </div>
+            <div className="w-48">
+              <Input
+                type="date"
+                placeholder="Filter Tanggal"
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value)}
+              />
+            </div>
+            {(searchHistory || dateFilter) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearchHistory("");
+                  setDateFilter("");
+                }}
+              >
+                Clear Filter
+              </Button>
+            )}
+          </div>
+
+          {filteredCalculations.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Database className="h-12 w-12 mx-auto mb-2 opacity-50" />
+              <p>Belum ada data perhitungan yang tersimpan</p>
+              <p className="text-sm">Silahkan preview PO dan klik "Simpan ke Database"</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[50px]">No</TableHead>
+                    <TableHead>Nama Perhitungan</TableHead>
+                    <TableHead>Tanggal</TableHead>
+                    <TableHead>User</TableHead>
+                    <TableHead className="text-center">Total PO</TableHead>
+                    <TableHead className="text-center">Total Material</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Kebutuhan</TableHead>
+                    <TableHead className="text-right">Kekurangan</TableHead>
+                    <TableHead className="text-center">Aksi</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredCalculations.map((calc, idx) => {
+                    const { total, amanPercent } = getStatusSummary(calc);
+                    return (
+                      <TableRow key={calc.id}>
+                        <TableCell>{idx + 1}</TableCell>
+                        <TableCell>
+                          <div className="font-medium">
+                            {calc.calculation_name || calc.calculation_id}
+                          </div>
+                          <div className="text-xs text-muted-foreground font-mono">
+                            ID: {calc.calculation_id}
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {new Date(calc.calculation_date).toLocaleString("id-ID")}
+                        </TableCell>
+                        <TableCell>{calc.user_id}</TableCell>
+                        <TableCell className="text-center font-bold">
+                          {calc.total_po}
+                        </TableCell>
+                        <TableCell className="text-center font-bold">
+                          {calc.total_materials}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1 flex-wrap">
+                            {calc.material_aman > 0 && (
+                              <Badge className="bg-green-500">
+                                ✅ {calc.material_aman}
+                              </Badge>
+                            )}
+                            {calc.material_kurang > 0 && (
+                              <Badge className="bg-orange-500">
+                                ⚠️ {calc.material_kurang}
+                              </Badge>
+                            )}
+                            {calc.material_habis > 0 && (
+                              <Badge className="bg-red-500">
+                                ❌ {calc.material_habis}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Keamanan: {amanPercent.toFixed(0)}%
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {calc.total_kebutuhan?.toLocaleString() || 0}
+                        </TableCell>
+                        <TableCell className="text-right text-red-600 font-bold">
+                          {calc.total_kekurangan?.toLocaleString() || 0}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedCalc(calc);
+                                setDetailSheetOpen(true);
+                              }}
+                            >
+                              <Eye className="h-3 w-3 mr-1" />
+                              Detail
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => onLoadCalculation(calc)}
+                            >
+                              <Download className="h-3 w-3 mr-1" />
+                              Load
+                            </Button>
+                            {onDeleteCalculation && (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => {
+                                  if (confirm(`Hapus perhitungan "${calc.calculation_name || calc.calculation_id}"?`)) {
+                                    onDeleteCalculation(calc.calculation_id);
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Detail Sheet - menggunakan Sheet seperti preview dialog */}
+      <Sheet open={detailSheetOpen} onOpenChange={setDetailSheetOpen}>
+        <SheetContent side="bottom" className="h-[90vh] p-0 flex flex-col">
+          <div className="flex-shrink-0 border-b px-6 py-4 bg-white">
+            <SheetHeader className="text-left">
+              <SheetTitle className="flex items-center gap-2">
+                <Database className="h-5 w-5" />
+                Detail Perhitungan: {selectedCalc?.calculation_name || selectedCalc?.calculation_id}
+              </SheetTitle>
+              <SheetDescription>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Tanggal</div>
+                    <div className="font-medium">{selectedCalc?.calculation_date && new Date(selectedCalc.calculation_date).toLocaleString("id-ID")}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">User</div>
+                    <div className="font-medium">{selectedCalc?.user_id}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Total PO</div>
+                    <div className="font-medium">{selectedCalc?.total_po}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Total Material</div>
+                    <div className="font-medium">{selectedCalc?.total_materials}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Total Kebutuhan</div>
+                    <div className="font-medium">{selectedCalc?.total_kebutuhan?.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground text-red-600">Total Kekurangan</div>
+                    <div className="font-medium text-red-600">{selectedCalc?.total_kekurangan?.toLocaleString()}</div>
+                  </div>
+                </div>
+              </SheetDescription>
+            </SheetHeader>
+          </div>
+
+          {/* Table Material Data */}
+          <div className="flex-1 overflow-auto px-6 py-4 min-h-0">
+            <div className="border rounded-md h-full">
+              <div className="overflow-auto" style={{ maxHeight: "calc(90vh - 280px)" }}>
+                <Table>
+                  <TableHeader className="sticky top-0 bg-gray-50 z-10">
+                    <TableRow>
+                      <TableHead>Kode Material</TableHead>
+                      <TableHead>Nama Material</TableHead>
+                      <TableHead>Departemen</TableHead>
+                      <TableHead className="text-right">Kebutuhan</TableHead>
+                      <TableHead className="text-right">Stok Wincp</TableHead>
+                      <TableHead className="text-right">Reserved</TableHead>
+                      <TableHead className="text-right">Dibutuhkan</TableHead>
+                      <TableHead className="text-right">Available</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {selectedCalc?.material_data?.slice(0, 100).map((item: any, idx: number) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-mono text-xs">{item["Kode Material"]}</TableCell>
+                        <TableCell className="text-sm">{item["Nama Material"]}</TableCell>
+                        <TableCell>{item["Departemen"]}</TableCell>
+                        <TableCell className="text-right">{item["Total Kebutuhan"]}</TableCell>
+                        <TableCell className="text-right">{item["Stok Wincp (Real)"]}</TableCell>
+                        <TableCell className="text-right">{item["Qty Reserved (PO Lain)"]}</TableCell>
+                        <TableCell className="text-right">{item["Total Dibutuhkan"]}</TableCell>
+                        <TableCell className="text-right">{item["Qty Available"]}</TableCell>
+                        <TableCell className={item["Status Stock"] === "AMAN" ? "text-green-600 font-bold" : item["Status Stock"] === "KURANG" ? "text-orange-600 font-bold" : "text-red-600 font-bold"}>
+                          {item["Status Stock"]}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {selectedCalc?.material_data?.length > 100 && (
+                  <div className="text-center text-muted-foreground text-sm py-4">
+                    Menampilkan 100 dari {selectedCalc?.material_data?.length} material
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="flex-shrink-0 border-t px-6 py-4 bg-white">
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDetailSheetOpen(false)}>
+                Tutup
+              </Button>
+              <Button onClick={() => {
+                onLoadCalculation(selectedCalc);
+                setDetailSheetOpen(false);
+              }}>
+                <Download className="h-4 w-4 mr-2" />
+                Load Perhitungan Ini
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
+  );
+};
 // ==================== KOMPONEN UTAMA ====================
 export default function ProductionPlanPage() {
   const [orders, setOrders] = useState<ProductionPlan[]>([]);
@@ -950,7 +1300,46 @@ export default function ProductionPlanPage() {
     totalMaterial: 0,
   });
   const [isMounted, setIsMounted] = useState(false);
+  // Di dalam ProductionPlanPage component, tambahkan state
+  const [savingToDatabase, setSavingToDatabase] = useState(false);
+  const [savedCalculations, setSavedCalculations] = useState<any[]>([]);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
 
+  // Fungsi untuk menghapus perhitungan
+  const deleteCalculation = async (calculationId: string) => {
+    try {
+      const response = await fetch(
+        `/api/ppic/save-material-requirements?calculation_id=${calculationId}`,
+        {
+          method: "DELETE",
+        },
+      );
+      const result = await response.json();
+      if (result.success) {
+        showToast(
+          `✅ Perhitungan ${calculationId} berhasil dihapus`,
+          "success",
+        );
+        await loadSavedCalculations();
+      } else {
+        throw new Error(result.error || "Failed to delete");
+      }
+    } catch (error) {
+      console.error("Error deleting calculation:", error);
+      showToast(`❌ Gagal menghapus: ${error}`, "error");
+    }
+  };
+
+  // Fungsi untuk memuat perhitungan yang tersimpan ke preview
+  const loadCalculationToPreview = (calculation: any) => {
+    setPreviewDialog({
+      open: true,
+      data: calculation.material_data,
+      fileName: calculation.calculation_id,
+      totalPO: calculation.total_po,
+      totalMaterial: calculation.total_materials,
+    });
+  };
   // Toast notification state
   const [toast, setToast] = useState<{
     message: string;
@@ -1804,10 +2193,10 @@ export default function ProductionPlanPage() {
         (order) => order.selected,
         // && !order.committed,
       );
-const exportingSPKs = new Set(
-  selectedOrders.map((order) => order.order.No_SPK),
-);
-console.log("Exporting SPKs:", Array.from(exportingSPKs));
+      const exportingSPKs = new Set(
+        selectedOrders.map((order) => order.order.No_SPK),
+      );
+      console.log("Exporting SPKs:", Array.from(exportingSPKs));
       if (selectedOrders.length === 0) {
         alert("Tidak ada PO yang dipilih untuk di-export!");
         setExportLoading(false);
@@ -2231,12 +2620,12 @@ console.log("Exporting SPKs:", Array.from(exportingSPKs));
           !reservation.noSPK
         )
           continue;
-if (exportingSPKs.has(reservation.noSPK)) {
-  console.log(
-    `Skipping self-reservation for PO: ${reservation.noSPK}, Qty: ${reservation.reservedQty}`,
-  );
-  continue;
-}
+        if (exportingSPKs.has(reservation.noSPK)) {
+          console.log(
+            `Skipping self-reservation for PO: ${reservation.noSPK}, Qty: ${reservation.reservedQty}`,
+          );
+          continue;
+        }
         const itemId = normalizeItemId(reservation.itemID);
         if (!reservationsByItem.has(itemId)) {
           reservationsByItem.set(itemId, {
@@ -3252,388 +3641,658 @@ if (exportingSPKs.has(reservation.noSPK)) {
     setCurrentPage(1);
   };
 
-  // ==================== FUNGSI PREVIEW EXPORT (DIPERBAIKI) ====================
- const previewExport = async () => {
-   try {
-     setExportLoading(true);
-     setExportProgress({
-       visible: true,
-       current: 0,
-       total: 100,
-       message: "Mempersiapkan preview data...",
-     });
-     showToast("Mempersiapkan preview data dengan cek stok...", "loading");
+  // Fungsi untuk menyimpan material requirements ke database
+  // Fungsi untuk menyimpan material requirements ke database
+  const saveMaterialRequirementsToDatabase = async (materialData: any[]) => {
+    try {
+      const selectedOrders = filteredOrders.filter((order) => order.selected);
 
-     const selectedOrders = filteredOrders.filter((order) => order.selected);
+      // 🔥 BUAT NAMA BERDASARKAN PO (bukan CALC)
+      let calculationName = "";
+      if (selectedOrders.length === 1) {
+        const singlePO = selectedOrders[0];
+        calculationName = singlePO.order.Nama_PO || singlePO.order.No_SPK;
+        // Bersihkan nama
+        calculationName = calculationName
+          .replace(/[\\/*?:"<>|]/g, "")
+          .replace(/\s+/g, "_")
+          .substring(0, 50);
+      } else {
+        const firstPO = selectedOrders[0];
+        const firstPOName = firstPO.order.Nama_PO || firstPO.order.No_SPK;
+        const cleanFirstPO = firstPOName
+          .replace(/[\\/*?:"<>|]/g, "")
+          .replace(/\s+/g, "_")
+          .substring(0, 40);
+        calculationName = `${cleanFirstPO}_dan_${selectedOrders.length - 1}_lainnya`;
+      }
 
-     if (selectedOrders.length === 0) {
-       alert("Tidak ada PO yang dipilih untuk di-preview!");
-       setExportLoading(false);
-       setExportProgress({
-         visible: false,
-         current: 0,
-         total: 0,
-         message: "",
-       });
-       return;
-     }
+      // Tambahkan timestamp untuk uniqueness
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .split(".")[0];
+      const calculationId = `${calculationName}_${timestamp}`;
 
-     setExportProgress({
-       visible: true,
-       current: 20,
-       total: 100,
-       message: `Memuat BOM & stok untuk ${selectedOrders.length} PO...`,
-     });
-     const ordersWithBom = await loadBomAndStockForExport(selectedOrders);
+      // Hitung summary
+      const totalKebutuhan = materialData.reduce(
+        (sum, item) =>
+          sum +
+          (parseInt(String(item["Total Kebutuhan"]).replace(/,/g, "")) || 0),
+        0,
+      );
 
-     setExportProgress({
-       visible: true,
-       current: 50,
-       total: 100,
-       message: "Mengambil data master...",
-     });
+      const totalKekurangan = materialData.reduce((sum, item) => {
+        const kekurangan =
+          parseInt(String(item["Kekurangan"]).replace(/,/g, "")) || 0;
+        return sum + kekurangan;
+      }, 0);
 
-     const allMaterialIds: string[] = [];
-     for (const order of ordersWithBom) {
-       if (order.bom?.flat) {
-         order.bom.flat.forEach((item: BomItem) => {
-           if (item.ItemID && Number(item.Level) > 0)
-             allMaterialIds.push(normalizeItemId(item.ItemID));
-         });
-       }
-     }
-     const masterDataMap = await fetchMasterDataForItems(allMaterialIds);
+      const materialAman = materialData.filter(
+        (item) => item["Status Stock"] === "AMAN",
+      ).length;
+      const materialKurang = materialData.filter(
+        (item) => item["Status Stock"] === "KURANG",
+      ).length;
+      const materialHabis = materialData.filter(
+        (item) => item["Status Stock"] === "HABIS",
+      ).length;
 
-     setExportProgress({
-       visible: true,
-       current: 70,
-       total: 100,
-       message: "Menghitung kebutuhan & reserved stock...",
-     });
+      // Data PO yang dipilih
+      const poList = selectedOrders.map((order) => ({
+        no_spk: order.order.No_SPK,
+        nama_po: order.order.Nama_PO,
+        kode_barang: order.order.Kode_Barang,
+        qty: order.order.QTY,
+        tanggal_order: order.order.Tanggal_Order,
+        is_combined:
+          order.order.combinedItems && order.order.combinedItems.length > 1,
+      }));
 
-     // 🔥 BUAT SET UNTUK MENAMPUNG SPK YANG SEDANG DIPREVIEW
-     const exportingSPKs = new Set(
-       selectedOrders.map((order) => order.order.No_SPK),
-     );
-     console.log(
-       "Preview SPKs (excluding self-reservation):",
-       Array.from(exportingSPKs),
-     );
+      // Siapkan data untuk disimpan
+      const saveData = {
+        calculation_id: calculationId,
+        calculation_name: calculationName, // 🔥 TAMBAHKAN NAMA PERHITUNGAN
+        user_id: "current_user",
+        po_list: poList,
+        total_po: selectedOrders.length,
+        material_data: materialData,
+        total_materials: materialData.length,
+        total_kebutuhan: totalKebutuhan,
+        total_kekurangan: totalKekurangan,
+        material_aman: materialAman,
+        material_kurang: materialKurang,
+        material_habis: materialHabis,
+        stock_date: new Date().toISOString().split("T")[0],
+        notes: `Calculate ${selectedOrders.length} PO(s) - ${calculationName}`,
+      };
 
-     // 🔥 HANYA SATU DEKLARASI reservationsByItem (dengan filter)
-     const reservationsByItem = new Map<
-       string,
-       {
-         totalQty: number;
-         spkList: Set<{
-           namaPO: string;
-           qtyReserved: number;
-         }>;
-         itemName: string;
-       }
-     >();
+      console.log("Saving to database:", saveData);
 
-     for (const reservation of stockReservations) {
-       if (
-         reservation.status !== "RESERVED" ||
-         reservation.reservedQty <= 0 ||
-         !reservation.noSPK
-       )
-         continue;
+      const response = await fetch("/api/ppic/save-material-requirements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(saveData),
+      });
 
-       // 🔥 LEWATKAN RESERVATION UNTUK PO YANG SEDANG DIPREVIEW
-       if (exportingSPKs.has(reservation.noSPK)) {
-         console.log(
-           `Skipping self-reservation for PO: ${reservation.noSPK}, Qty: ${reservation.reservedQty}`,
-         );
-         continue;
-       }
+      const result = await response.json();
 
-       const itemId = normalizeItemId(reservation.itemID);
-       if (!reservationsByItem.has(itemId)) {
-         reservationsByItem.set(itemId, {
-           totalQty: 0,
-           spkList: new Set(),
-           itemName: reservation.itemName || itemId,
-         });
-       }
+      if (result.success) {
+        showToast(
+          `✅ Data berhasil disimpan! Nama: ${calculationName}`,
+          "success",
+        );
+        await loadSavedCalculations();
+        return result;
+      } else {
+        throw new Error(result.error || "Failed to save");
+      }
+    } catch (error) {
+      console.error("Error saving to database:", error);
+      showToast(`⚠️ Gagal menyimpan ke database: ${error}`, "error");
+      return null;
+    }
+  };
 
-       const itemData = reservationsByItem.get(itemId)!;
-       itemData.totalQty += reservation.reservedQty;
+  // Fungsi untuk memuat history perhitungan yang tersimpan
+  const loadSavedCalculations = async () => {
+    try {
+      const response = await fetch(
+        "/api/ppic/save-material-requirements?limit=20",
+      );
+      const result = await response.json();
+      if (result.success) {
+        setSavedCalculations(result.data);
+      }
+    } catch (error) {
+      console.error("Error loading saved calculations:", error);
+    }
+  };
 
-       const namaPO = reservation.namaPO || reservation.noSPK;
+  // Fungsi handle save dari preview dialog
+  const handleSaveToDatabase = async () => {
+    if (!previewDialog.data || previewDialog.data.length === 0) {
+      showToast("Tidak ada data untuk disimpan", "error");
+      return;
+    }
 
-       let existing: { namaPO: string; qtyReserved: number } | undefined;
-       for (const item of itemData.spkList) {
-         if (item.namaPO === namaPO) {
-           existing = item;
-           break;
-         }
-       }
+    setSavingToDatabase(true);
+    try {
+      await saveMaterialRequirementsToDatabase(previewDialog.data);
+    } catch (error) {
+      console.error("Error saving:", error);
+    } finally {
+      setSavingToDatabase(false);
+    }
+  };
 
-       if (existing) {
-         existing.qtyReserved += reservation.reservedQty;
-       } else {
-         itemData.spkList.add({
-           namaPO: namaPO,
-           qtyReserved: reservation.reservedQty,
-         });
-       }
-     }
+  const previewExport = async () => {
+    try {
+      setExportLoading(true);
+      setExportProgress({
+        visible: true,
+        current: 0,
+        total: 100,
+        message: "Mempersiapkan preview data...",
+      });
+      showToast("Mempersiapkan preview data dengan cek stok...", "loading");
 
-     // FUNGSI CALCULATE ACCUMULATED QTY
-     const calculateAccumulatedQtyForMaterial = (
-       flatBom: BomItem[],
-     ): Map<string, number> => {
-       const cache = new Map<string, number>();
-       const itemMap = new Map<string, BomItem>();
+      const selectedOrders = filteredOrders.filter((order) => order.selected);
 
-       for (const item of flatBom) {
-         itemMap.set(normalizeItemId(item.ItemID), item);
-       }
+      if (selectedOrders.length === 0) {
+        alert("Tidak ada PO yang dipilih untuk di-preview!");
+        setExportLoading(false);
+        setExportProgress({
+          visible: false,
+          current: 0,
+          total: 0,
+          message: "",
+        });
+        return;
+      }
 
-       for (const item of flatBom) {
-         const itemId = normalizeItemId(item.ItemID);
-         const level = Number(item.Level);
+      setExportProgress({
+        visible: true,
+        current: 20,
+        total: 100,
+        message: `Memuat BOM & stok untuk ${selectedOrders.length} PO...`,
+      });
+      const ordersWithBom = await loadBomAndStockForExport(selectedOrders);
 
-         if (level === 1) {
-           cache.set(itemId, item.Qty);
-         } else {
-           let parent: BomItem | undefined = undefined;
+      setExportProgress({
+        visible: true,
+        current: 50,
+        total: 100,
+        message: "Mengambil data master...",
+      });
 
-           if (item.ParentItemID) {
-             parent = itemMap.get(normalizeItemId(item.ParentItemID));
-           }
+      const allMaterialIds: string[] = [];
+      for (const order of ordersWithBom) {
+        if (order.bom?.flat) {
+          order.bom.flat.forEach((item: BomItem) => {
+            if (item.ItemID && Number(item.Level) > 0)
+              allMaterialIds.push(normalizeItemId(item.ItemID));
+          });
+        }
+      }
+      const masterDataMap = await fetchMasterDataForItems(allMaterialIds);
 
-           if (!parent) {
-             parent = flatBom.find((p) => Number(p.Level) === level - 1);
-           }
+      setExportProgress({
+        visible: true,
+        current: 70,
+        total: 100,
+        message: "Menghitung kebutuhan & reserved stock...",
+      });
 
-           if (parent) {
-             const parentId = normalizeItemId(parent.ItemID);
-             const parentAccumulated = cache.get(parentId);
-             if (parentAccumulated !== undefined) {
-               cache.set(itemId, item.Qty * parentAccumulated);
-             } else {
-               cache.set(itemId, item.Qty);
-             }
-           } else {
-             cache.set(itemId, item.Qty);
-           }
-         }
-       }
-       return cache;
-     };
+      // BUAT SET UNTUK MENAMPUNG SPK YANG SEDANG DIPREVIEW
+      const exportingSPKs = new Set(
+        selectedOrders.map((order) => order.order.No_SPK),
+      );
+      console.log(
+        "Preview SPKs (excluding self-reservation):",
+        Array.from(exportingSPKs),
+      );
 
-     // MATERIAL AGGREGATION MAP
-     const materialAggMap = new Map<string, any>();
+      // RESERVATIONS BY ITEM (dengan filter self-reservation)
+      const reservationsByItem = new Map<
+        string,
+        {
+          totalQty: number;
+          spkList: Set<{
+            namaPO: string;
+            qtyReserved: number;
+          }>;
+          itemName: string;
+        }
+      >();
 
-     for (const order of ordersWithBom) {
-       if (!order.bom || !order.stock) continue;
+      for (const reservation of stockReservations) {
+        if (
+          reservation.status !== "RESERVED" ||
+          reservation.reservedQty <= 0 ||
+          !reservation.noSPK
+        )
+          continue;
 
-       const isCombined =
-         order.order.combinedItems && order.order.combinedItems.length > 1;
-       const barangJadiItems: Array<{
-         kode: string;
-         qty: number;
-         nama: string;
-       }> = [];
+        // LEWATKAN RESERVATION UNTUK PO YANG SEDANG DIPREVIEW
+        if (exportingSPKs.has(reservation.noSPK)) {
+          console.log(
+            `Skipping self-reservation for PO: ${reservation.noSPK}, Qty: ${reservation.reservedQty}`,
+          );
+          continue;
+        }
 
-       if (isCombined && order.order.combinedItems) {
-         order.order.combinedItems.forEach((item) =>
-           barangJadiItems.push({
-             kode: item.Kode_Barang,
-             qty: item.QTY,
-             nama: item.Nama_PO,
-           }),
-         );
-       } else {
-         barangJadiItems.push({
-           kode: order.order.Kode_Barang,
-           qty: order.order.QTY,
-           nama: order.order.Nama_PO,
-         });
-       }
+        const itemId = normalizeItemId(reservation.itemID);
+        if (!reservationsByItem.has(itemId)) {
+          reservationsByItem.set(itemId, {
+            totalQty: 0,
+            spkList: new Set(),
+            itemName: reservation.itemName || itemId,
+          });
+        }
 
-       for (const barangJadi of barangJadiItems) {
-         let bomFlat: BomItem[] = [];
-         if (isCombined && order.bom?.combinedBoms) {
-           const bomItem = order.bom.combinedBoms[barangJadi.kode];
-           if (bomItem) bomFlat = bomItem.flat;
-         } else {
-           bomFlat = order.bom.flat;
-         }
+        const itemData = reservationsByItem.get(itemId)!;
+        itemData.totalQty += reservation.reservedQty;
 
-         if (bomFlat.length === 0) continue;
+        const namaPO = reservation.namaPO || reservation.noSPK;
 
-         const components = bomFlat.filter(
-           (b) => Number(b.Level) > 0 && !isINJECTIONDepartment(b.Departemen),
-         );
+        let existing: { namaPO: string; qtyReserved: number } | undefined;
+        for (const item of itemData.spkList) {
+          if (item.namaPO === namaPO) {
+            existing = item;
+            break;
+          }
+        }
 
-         if (components.length === 0) continue;
+        if (existing) {
+          existing.qtyReserved += reservation.reservedQty;
+        } else {
+          itemData.spkList.add({
+            namaPO: namaPO,
+            qtyReserved: reservation.reservedQty,
+          });
+        }
+      }
 
-         const accumulatedMap = calculateAccumulatedQtyForMaterial(bomFlat);
-         const tempNeeds = new Map<string, number>();
+      // FUNGSI CALCULATE ACCUMULATED QTY
+      const calculateAccumulatedQtyForMaterial = (
+        flatBom: BomItem[],
+      ): Map<string, number> => {
+        const cache = new Map<string, number>();
+        const itemMap = new Map<string, BomItem>();
 
-         for (const component of components) {
-           const materialId = normalizeItemId(component.ItemID);
-           const accumulatedQty =
-             accumulatedMap.get(materialId) || component.Qty;
-           const needed = accumulatedQty * barangJadi.qty;
-           tempNeeds.set(materialId, (tempNeeds.get(materialId) || 0) + needed);
-         }
+        for (const item of flatBom) {
+          itemMap.set(normalizeItemId(item.ItemID), item);
+        }
 
-         for (const [materialId, needed] of tempNeeds) {
-           const masterInfo = masterDataMap.get(materialId) || {
-             spec: "-",
-             warna: "-",
-             bahan: "-",
-           };
+        for (const item of flatBom) {
+          const itemId = normalizeItemId(item.ItemID);
+          const level = Number(item.Level);
 
-           const stockItem = order.stock.find(
-             (s) => normalizeItemId(s.itemid) === materialId,
-           );
+          if (level === 1) {
+            cache.set(itemId, item.Qty);
+          } else {
+            let parent: BomItem | undefined = undefined;
 
-           const stockWincp = stockItem?.physicalStock || 0;
-           const stockAkhir = stockItem?.stockAkhir || 0;
+            if (item.ParentItemID) {
+              parent = itemMap.get(normalizeItemId(item.ParentItemID));
+            }
 
-           const reservedData = reservationsByItem.get(materialId);
-           const qtyReservedFromOtherPO = reservedData?.totalQty || 0;
+            if (!parent) {
+              parent = flatBom.find((p) => Number(p.Level) === level - 1);
+            }
 
-           const reservedByText = reservedData
-             ? Array.from(reservedData.spkList)
-                 .map(
-                   (item) =>
-                     `${item.namaPO} (${item.qtyReserved.toLocaleString()})`,
-                 )
-                 .join("\n")
-             : "-";
+            if (parent) {
+              const parentId = normalizeItemId(parent.ItemID);
+              const parentAccumulated = cache.get(parentId);
+              if (parentAccumulated !== undefined) {
+                cache.set(itemId, item.Qty * parentAccumulated);
+              } else {
+                cache.set(itemId, item.Qty);
+              }
+            } else {
+              cache.set(itemId, item.Qty);
+            }
+          }
+        }
+        return cache;
+      };
 
-           const component = components.find(
-             (c) => normalizeItemId(c.ItemID) === materialId,
-           );
+      // MATERIAL AGGREGATION MAP
+      const materialAggMap = new Map<string, any>();
 
-           if (!materialAggMap.has(materialId)) {
-             materialAggMap.set(materialId, {
-               kode: materialId,
-               nama: component?.ItemName || materialId,
-               nama_china: component?.ItemName2 || "-",
-               spec: masterInfo.spec,
-               warna: masterInfo.warna,
-               bahan: masterInfo.bahan,
-               departemen: component?.Departemen || "UNKNOWN",
-               totalNeeded: 0,
-               stockWincp: stockWincp,
-               stockAkhir: stockAkhir,
-               qtyReserved: qtyReservedFromOtherPO,
-               reservedBy: reservedByText,
-               barangJadiSet: new Map(),
-             });
-           }
+      for (const order of ordersWithBom) {
+        if (!order.bom || !order.stock) continue;
 
-           const agg = materialAggMap.get(materialId);
-           agg.totalNeeded += needed;
+        const isCombined =
+          order.order.combinedItems && order.order.combinedItems.length > 1;
+        const barangJadiItems: Array<{
+          kode: string;
+          qty: number;
+          nama: string;
+        }> = [];
 
-           if (!agg.barangJadiSet.has(barangJadi.kode)) {
-             agg.barangJadiSet.set(barangJadi.kode, {
-               qty: barangJadi.qty,
-               nama: barangJadi.nama,
-               kode: barangJadi.kode,
-             });
-           }
-         }
-       }
-     }
+        if (isCombined && order.order.combinedItems) {
+          order.order.combinedItems.forEach((item) =>
+            barangJadiItems.push({
+              kode: item.Kode_Barang,
+              qty: item.QTY,
+              nama: item.Nama_PO,
+            }),
+          );
+        } else {
+          barangJadiItems.push({
+            kode: order.order.Kode_Barang,
+            qty: order.order.QTY,
+            nama: order.order.Nama_PO,
+          });
+        }
 
-     // 🔥 BUAT PREVIEW DATA
-     const previewMaterialData: any[] = [];
+        for (const barangJadi of barangJadiItems) {
+          let bomFlat: BomItem[] = [];
+          if (isCombined && order.bom?.combinedBoms) {
+            const bomItem = order.bom.combinedBoms[barangJadi.kode];
+            if (bomItem) bomFlat = bomItem.flat;
+          } else {
+            bomFlat = order.bom.flat;
+          }
 
-     for (const agg of materialAggMap.values()) {
-       const barangJadiDetails: string[] = [];
-       for (const [kode, info] of agg.barangJadiSet) {
-         barangJadiDetails.push(`${kode} (${info.qty.toLocaleString()})`);
-       }
+          if (bomFlat.length === 0) continue;
 
-       const variantInfo = getVariantInfo(agg.kode);
+          const components = bomFlat.filter(
+            (b) => Number(b.Level) > 0 && !isINJECTIONDepartment(b.Departemen),
+          );
 
-       const totalDibutuhkan = agg.totalNeeded + agg.qtyReserved;
-       const available = agg.stockWincp - totalDibutuhkan;
-       const kekurangan = totalDibutuhkan - agg.stockWincp;
+          if (components.length === 0) continue;
 
-       let status = "";
-       if (agg.stockWincp >= totalDibutuhkan) {
-         status = "AMAN";
-       } else if (agg.stockWincp > 0) {
-         status = "KURANG";
-       } else {
-         status = "HABIS";
-       }
+          const accumulatedMap = calculateAccumulatedQtyForMaterial(bomFlat);
+          const tempNeeds = new Map<string, number>();
 
-       previewMaterialData.push({
-         "Kode Material": agg.kode,
-         "Nama Material": agg.nama,
-         "Nama China": agg.nama_china,
-         Spesifikasi: agg.spec,
-         Warna: agg.warna,
-         Bahan: agg.bahan,
-         Departemen: agg.departemen,
-         "Barang Jadi": barangJadiDetails.join("\n"),
-         "Total Kebutuhan": agg.totalNeeded.toLocaleString(),
-         "Stok Wincp (Real)": agg.stockWincp.toLocaleString(),
-         "Saldo Akhir": agg.stockAkhir.toLocaleString(),
-         "Qty Reserved (PO Lain)": agg.qtyReserved.toLocaleString(),
-         "Total Dibutuhkan": totalDibutuhkan.toLocaleString(),
-         "Qty Available": available.toLocaleString(),
-         "Reserved Oleh SPK": agg.reservedBy,
-         "Keterangan Variant": variantInfo,
-         "Status Stock": status,
-         Kekurangan: kekurangan > 0 ? kekurangan.toLocaleString() : "0",
-       });
-     }
+          for (const component of components) {
+            const materialId = normalizeItemId(component.ItemID);
+            const accumulatedQty =
+              accumulatedMap.get(materialId) || component.Qty;
+            const needed = accumulatedQty * barangJadi.qty;
+            tempNeeds.set(
+              materialId,
+              (tempNeeds.get(materialId) || 0) + needed,
+            );
+          }
 
-     previewMaterialData.sort((a, b) =>
-       a["Kode Material"].localeCompare(b["Kode Material"]),
-     );
+          for (const [materialId, needed] of tempNeeds) {
+            const masterInfo = masterDataMap.get(materialId) || {
+              spec: "-",
+              warna: "-",
+              bahan: "-",
+            };
 
-     let fileName = "";
-     if (selectedOrders.length === 1) {
-       const singlePO = selectedOrders[0];
-       const poName = singlePO.order.Nama_PO || singlePO.order.No_SPK;
-       fileName = poName
-         .replace(/[\\/*?:"<>|]/g, "")
-         .replace(/\s+/g, "_")
-         .substring(0, 50);
-     } else {
-       const firstPO = selectedOrders[0];
-       const firstPOName = firstPO.order.Nama_PO || firstPO.order.No_SPK;
-       fileName = firstPOName
-         .replace(/[\\/*?:"<>|]/g, "")
-         .replace(/\s+/g, "_")
-         .substring(0, 40);
-     }
+            const stockItem = order.stock.find(
+              (s) => normalizeItemId(s.itemid) === materialId,
+            );
 
-     setPreviewDialog({
-       open: true,
-       data: previewMaterialData,
-       fileName: fileName,
-       totalPO: selectedOrders.length,
-       totalMaterial: previewMaterialData.length,
-     });
+            const stockWincp = stockItem?.physicalStock || 0;
+            const stockAkhir = stockItem?.stockAkhir || 0;
 
-     setExportProgress({ visible: false, current: 0, total: 0, message: "" });
-     showToast("Preview siap dengan informasi stok lengkap", "success");
-   } catch (error) {
-     console.error("Error preview:", error);
-     showToast(
-       `❌ Gagal preview: ${error instanceof Error ? error.message : "Unknown error"}`,
-       "error",
-     );
-   } finally {
-     setExportLoading(false);
-     setExportProgress({ visible: false, current: 0, total: 0, message: "" });
-   }
- };
+            const reservedData = reservationsByItem.get(materialId);
+            const qtyReservedFromOtherPO = reservedData?.totalQty || 0;
 
+            const component = components.find(
+              (c) => normalizeItemId(c.ItemID) === materialId,
+            );
+
+            if (!materialAggMap.has(materialId)) {
+              materialAggMap.set(materialId, {
+                kode: materialId,
+                nama: component?.ItemName || materialId,
+                nama_china: component?.ItemName2 || "-",
+                spec: masterInfo.spec,
+                warna: masterInfo.warna,
+                bahan: masterInfo.bahan,
+                departemen: component?.Departemen || "UNKNOWN",
+                totalNeeded: 0,
+                stockWincp: stockWincp,
+                stockAkhir: stockAkhir,
+                qtyReserved: qtyReservedFromOtherPO,
+                barangJadiSet: new Map(),
+              });
+            }
+
+            const agg = materialAggMap.get(materialId);
+            agg.totalNeeded += needed;
+
+            if (!agg.barangJadiSet.has(barangJadi.kode)) {
+              agg.barangJadiSet.set(barangJadi.kode, {
+                qty: barangJadi.qty,
+                nama: barangJadi.nama,
+                kode: barangJadi.kode,
+              });
+            }
+          }
+        }
+      }
+
+      // ==================== HITUNG DETAIL PENGAMBILAN PER SPK ====================
+      const spkReservationDetails = new Map<
+        string,
+        Map<
+          string,
+          {
+            needed: number;
+            taken: number;
+            shortage: number;
+            stockBefore: number;
+            stockAfter: number;
+          }
+        >
+      >();
+
+      for (const order of ordersWithBom) {
+        if (!order.bom || !order.stock) continue;
+
+        const spk = order.order.No_SPK;
+        if (!spkReservationDetails.has(spk)) {
+          spkReservationDetails.set(spk, new Map());
+        }
+
+        const spkDetails = spkReservationDetails.get(spk)!;
+
+        const isCombined =
+          order.order.combinedItems && order.order.combinedItems.length > 1;
+        const barangJadiItems: Array<{
+          kode: string;
+          qty: number;
+          nama: string;
+        }> = [];
+
+        if (isCombined && order.order.combinedItems) {
+          order.order.combinedItems.forEach((item) =>
+            barangJadiItems.push({
+              kode: item.Kode_Barang,
+              qty: item.QTY,
+              nama: item.Nama_PO,
+            }),
+          );
+        } else {
+          barangJadiItems.push({
+            kode: order.order.Kode_Barang,
+            qty: order.order.QTY,
+            nama: order.order.Nama_PO,
+          });
+        }
+
+        for (const barangJadi of barangJadiItems) {
+          let bomFlat: BomItem[] = [];
+          if (isCombined && order.bom?.combinedBoms) {
+            const bomItem = order.bom.combinedBoms[barangJadi.kode];
+            if (bomItem) bomFlat = bomItem.flat;
+          } else {
+            bomFlat = order.bom.flat;
+          }
+
+          if (bomFlat.length === 0) continue;
+
+          const components = bomFlat.filter(
+            (b) => Number(b.Level) > 0 && !isINJECTIONDepartment(b.Departemen),
+          );
+
+          if (components.length === 0) continue;
+
+          const accumulatedMap = calculateAccumulatedQtyForMaterial(bomFlat);
+
+          for (const component of components) {
+            const materialId = normalizeItemId(component.ItemID);
+            const accumulatedQty =
+              accumulatedMap.get(materialId) || component.Qty;
+            const needed = accumulatedQty * barangJadi.qty;
+
+            // 🔥 PERBAIKAN: PAKAI physicalStock (Stok Wincp / Stok Real)
+            const stockItem = order.stock.find(
+              (s) => normalizeItemId(s.itemid) === materialId,
+            );
+            const stockReal = stockItem?.physicalStock || 0; // Stok Wincp (stok fisik real)
+
+            // Reserved dari PO LAIN (bukan PO ini)
+            const reservedFromOthers =
+              reservationsByItem.get(materialId)?.totalQty || 0;
+
+            // Stok yang benar-benar tersedia = Stok Real - Reserved PO Lain
+            const availableStock = Math.max(0, stockReal - reservedFromOthers);
+
+            // Berapa yang bisa diambil (tidak melebihi kebutuhan dan stok tersedia)
+            const taken = Math.min(needed, availableStock);
+
+            // Kekurangan = kebutuhan - yang bisa diambil
+            const shortage = Math.max(0, needed - taken);
+
+            if (spkDetails.has(materialId)) {
+              const existing = spkDetails.get(materialId)!;
+              existing.needed += needed;
+              existing.taken += taken;
+              existing.shortage += shortage;
+            } else {
+              spkDetails.set(materialId, {
+                needed,
+                taken,
+                shortage,
+                stockBefore: stockReal,
+                stockAfter: stockReal - taken,
+              });
+            }
+          }
+        }
+      }
+
+      // ==================== BUAT PREVIEW DATA DENGAN FORMAT BARU ====================
+      const previewMaterialData: any[] = [];
+
+      for (const agg of materialAggMap.values()) {
+        const barangJadiDetails: string[] = [];
+        for (const [kode, info] of agg.barangJadiSet) {
+          barangJadiDetails.push(`${kode} (${info.qty.toLocaleString()})`);
+        }
+        // BUAT DETAIL RESERVED OLEH SPK - FORMAT SEDERHANA (Nama PO dan QTY)
+        const reservationDetailsList: string[] = [];
+        for (const [spk, detailsMap] of spkReservationDetails) {
+          const materialDetail = detailsMap.get(agg.kode);
+          if (materialDetail && materialDetail.taken > 0) {
+            // Cari Nama PO dari order yang sesuai
+            const order = ordersWithBom.find((o) => o.order.No_SPK === spk);
+            const namaPO = order?.order.Nama_PO || spk;
+
+            // Format sederhana: Nama PO (QTY)
+            reservationDetailsList.push(
+              `${namaPO} (${materialDetail.taken.toLocaleString()})`,
+            );
+          }
+        }
+
+        const reservedByText =
+          reservationDetailsList.length > 0
+            ? reservationDetailsList.join("\n")
+            : "-";
+
+      
+        const variantInfo = getVariantInfo(agg.kode);
+
+        const totalDibutuhkan = agg.totalNeeded + agg.qtyReserved;
+        const available = agg.stockWincp - totalDibutuhkan;
+        const kekurangan = totalDibutuhkan - agg.stockWincp;
+
+        let status = "";
+        if (agg.stockWincp >= totalDibutuhkan) {
+          status = "AMAN";
+        } else if (agg.stockWincp > 0) {
+          status = "KURANG";
+        } else {
+          status = "HABIS";
+        }
+
+        previewMaterialData.push({
+          "Kode Material": agg.kode,
+          "Nama Material": agg.nama,
+          "Nama China": agg.nama_china,
+          Spesifikasi: agg.spec,
+          Warna: agg.warna,
+          Bahan: agg.bahan,
+          Departemen: agg.departemen,
+          "Barang Jadi": barangJadiDetails.join("\n"),
+          "Total Kebutuhan": agg.totalNeeded.toLocaleString(),
+          "Stok Wincp (Real)": agg.stockWincp.toLocaleString(),
+          "Saldo Akhir": agg.stockAkhir.toLocaleString(),
+          "Qty Reserved (PO Lain)": agg.qtyReserved.toLocaleString(),
+          "Total Dibutuhkan": totalDibutuhkan.toLocaleString(),
+          "Qty Available": available.toLocaleString(),
+          "Reserved Oleh SPK": reservedByText,
+          "Keterangan Variant": variantInfo,
+          "Status Stock": status,
+          Kekurangan: kekurangan > 0 ? kekurangan.toLocaleString() : "0",
+        });
+      }
+
+      previewMaterialData.sort((a, b) =>
+        a["Kode Material"].localeCompare(b["Kode Material"]),
+      );
+
+      let fileName = "";
+      if (selectedOrders.length === 1) {
+        const singlePO = selectedOrders[0];
+        const poName = singlePO.order.Nama_PO || singlePO.order.No_SPK;
+        fileName = poName
+          .replace(/[\\/*?:"<>|]/g, "")
+          .replace(/\s+/g, "_")
+          .substring(0, 50);
+      } else {
+        const firstPO = selectedOrders[0];
+        const firstPOName = firstPO.order.Nama_PO || firstPO.order.No_SPK;
+        fileName = firstPOName
+          .replace(/[\\/*?:"<>|]/g, "")
+          .replace(/\s+/g, "_")
+          .substring(0, 40);
+      }
+
+      setPreviewDialog({
+        open: true,
+        data: previewMaterialData,
+        fileName: fileName,
+        totalPO: selectedOrders.length,
+        totalMaterial: previewMaterialData.length,
+      });
+
+      setExportProgress({ visible: false, current: 0, total: 0, message: "" });
+      showToast("Preview siap dengan informasi stok lengkap", "success");
+    } catch (error) {
+      console.error("Error preview:", error);
+      showToast(
+        `❌ Gagal preview: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "error",
+      );
+    } finally {
+      setExportLoading(false);
+      setExportProgress({ visible: false, current: 0, total: 0, message: "" });
+    }
+  };
+
+  // PreviewDialog Component - VERSION WITH SAVE TO DATABASE BUTTON
   const PreviewDialog: React.FC<{
     open: boolean;
     data: any[] | null;
@@ -3642,6 +4301,8 @@ if (exportingSPKs.has(reservation.noSPK)) {
     totalMaterial: number;
     onClose: () => void;
     onExport: () => void;
+    onSaveToDatabase?: () => void; // TAMBAHKAN PROPS INI
+    saving?: boolean; // TAMBAHKAN PROPS INI
   }> = ({
     open,
     data,
@@ -3650,6 +4311,8 @@ if (exportingSPKs.has(reservation.noSPK)) {
     totalMaterial,
     onClose,
     onExport,
+    onSaveToDatabase, // TAMBAHKAN
+    saving = false, // TAMBAHKAN
   }) => {
     const [searchTerm, setSearchTerm] = useState("");
     const [sortField, setSortField] = useState<string>("Kode Material");
@@ -3997,9 +4660,9 @@ if (exportingSPKs.has(reservation.noSPK)) {
             </div>
           </div>
 
-          {/* Footer - tidak scroll */}
+          {/* Footer - PERBAIKI DENGAN MENAMBAHKAN TOMBOL SAVE KE DATABASE */}
           <div className="flex-shrink-0 border-t px-6 py-4 bg-white">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center flex-wrap gap-2">
               <div className="text-sm text-muted-foreground">
                 Total Kebutuhan:{" "}
                 <span className="font-bold">
@@ -4021,6 +4684,24 @@ if (exportingSPKs.has(reservation.noSPK)) {
                 <Button variant="outline" onClick={onClose}>
                   Tutup
                 </Button>
+
+                {/* TAMBAHKAN TOMBOL SAVE KE DATABASE */}
+                {onSaveToDatabase && (
+                  <Button
+                    onClick={onSaveToDatabase}
+                    disabled={saving}
+                    variant="secondary"
+                    className="gap-2"
+                  >
+                    {saving ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Database className="h-4 w-4" />
+                    )}
+                    {saving ? "Menyimpan..." : "Simpan ke Database"}
+                  </Button>
+                )}
+
                 <Button onClick={onExport} className="gap-2">
                   <Download className="h-4 w-4" />
                   Export ke Excel
@@ -4044,7 +4725,7 @@ if (exportingSPKs.has(reservation.noSPK)) {
   const committedCount = orders.filter((p) => p.committed).length;
 
   useEffect(() => {
-    refreshAllData();
+    (refreshAllData(), loadSavedCalculations());
   }, []);
   useEffect(() => {
     if (isMounted) {
@@ -4098,6 +4779,7 @@ if (exportingSPKs.has(reservation.noSPK)) {
           </div>
         </DialogContent>
 
+        {/* Preview Dialog */}
         <PreviewDialog
           open={previewDialog.open}
           data={previewDialog.data}
@@ -4123,6 +4805,8 @@ if (exportingSPKs.has(reservation.noSPK)) {
             });
             exportSelectedToExcel();
           }}
+          onSaveToDatabase={handleSaveToDatabase} // TAMBAHKAN INI
+          saving={savingToDatabase} // TAMBAHKAN INI
         />
       </Dialog>
 
@@ -4169,7 +4853,12 @@ if (exportingSPKs.has(reservation.noSPK)) {
         onRefresh={refreshAllData}
         onUncommit={uncommitPO}
       />
-
+      <HistoryPanel
+        calculations={savedCalculations}
+        onLoadCalculation={loadCalculationToPreview}
+        onRefresh={loadSavedCalculations}
+        onDeleteCalculation={deleteCalculation}
+      />
       {/* Search */}
       <Card>
         <CardHeader>
@@ -4443,35 +5132,50 @@ if (exportingSPKs.has(reservation.noSPK)) {
                             </div>
                           )}
                         </TableCell>
-
-                        <TableCell className="w-[120px] align-top text-center">
-                          {plan.committed ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              disabled
-                              className="gap-1 whitespace-nowrap"
-                            >
-                              <Lock className="h-3 w-3" />
-                              Committed
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="default"
-                              size="sm"
-                              onClick={() => commitPO(idx)}
-                              disabled={isCommitting}
-                              className="gap-1 whitespace-nowrap"
-                            >
-                              {isCommitting ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Lock className="h-3 w-3" />
-                              )}
-                              {isCommitting ? "Committing..." : "Commit PO"}
-                            </Button>
-                          )}
-                        </TableCell>
+<TableCell className="w-[120px] align-top text-center">
+  {plan.committed ? (
+    <div className="flex gap-2 justify-center">
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled
+        className="gap-1 whitespace-nowrap"
+      >
+        <Lock className="h-3 w-3" />
+        Committed
+      </Button>
+      <Button
+        variant="destructive"
+        size="sm"
+        onClick={() => uncommitPO(plan.order.No_SPK)}
+        disabled={isCommitting && committing === plan.order.No_SPK}
+        className="gap-1 whitespace-nowrap"
+      >
+        {isCommitting && committing === plan.order.No_SPK ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <Unlock className="h-3 w-3" />
+        )}
+        {isCommitting && committing === plan.order.No_SPK ? "Uncommitting..." : "Uncommit"}
+      </Button>
+    </div>
+  ) : (
+    <Button
+      variant="default"
+      size="sm"
+      onClick={() => commitPO(idx)}
+      disabled={isCommitting && committing === plan.order.No_SPK}
+      className="gap-1 whitespace-nowrap"
+    >
+      {isCommitting && committing === plan.order.No_SPK ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <Lock className="h-3 w-3" />
+      )}
+      {isCommitting && committing === plan.order.No_SPK ? "Committing..." : "Commit PO"}
+    </Button>
+  )}
+</TableCell>
                       </TableRow>
                     );
                   })}
