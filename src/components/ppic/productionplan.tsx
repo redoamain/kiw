@@ -4386,6 +4386,7 @@ export default function ProductionPlanPage() {
       }
 
       // ==================== BUAT PREVIEW DATA DENGAN FORMAT BARU ====================
+      // ==================== BUAT PREVIEW DATA DENGAN FORMAT BARU ====================
       const previewMaterialData: any[] = [];
 
       // BUAT SET UNTUK MENGECEK SPK YANG SEDANG DIEXPORT
@@ -4399,24 +4400,36 @@ export default function ProductionPlanPage() {
           barangJadiDetails.push(`${kode} (${info.qty.toLocaleString()})`);
         }
 
-        // BUAT DETAIL RESERVED OLEH SPK - HANYA DARI PO LAIN (BUKAN YANG DIEXPORT)
+        // 🔥 PERBAIKAN: Ambil reserved dari PO LAIN dari reservationsByItem
         const reservationDetailsList: string[] = [];
-        for (const [spk, detailsMap] of spkReservationDetails) {
-          // 🔥 PERBAIKAN: SKIP SPK YANG SEDANG DIEXPORT
-          if (exportingSPKsSet.has(spk)) {
-            continue;
-          }
 
-          const materialDetail = detailsMap.get(agg.kode);
-          if (materialDetail && materialDetail.taken > 0) {
-            // Cari Nama PO dari order yang sesuai
-            const order = ordersWithBom.find((o) => o.order.No_SPK === spk);
-            const namaPO = order?.order.Nama_PO || spk;
+        // Cek apakah material ini memiliki reserved dari PO lain
+        const reservedData = reservationsByItem.get(agg.kode);
 
-            // Format sederhana: Nama PO (QTY)
-            reservationDetailsList.push(
-              `${namaPO} (${materialDetail.taken.toLocaleString()})`,
-            );
+        if (reservedData && reservedData.spkList.size > 0) {
+          // Loop melalui semua SPK yang mereserved material ini
+          for (const spkReservation of reservedData.spkList) {
+            // namaPO di spkList bisa berupa No_SPK atau Nama_PO
+            // Kita perlu mengecek apakah SPK ini SEDANG DIPREVIEW
+            let isExportingSPK = false;
+
+            // Cek apakah spkReservation.namaPO matches dengan salah satu No_SPK yang dipreview
+            for (const order of selectedOrders) {
+              if (
+                order.order.No_SPK === spkReservation.namaPO ||
+                order.order.Nama_PO === spkReservation.namaPO
+              ) {
+                isExportingSPK = true;
+                break;
+              }
+            }
+
+            // Hanya tampilkan jika SPK ini TIDAK sedang dipreview
+            if (!isExportingSPK) {
+              reservationDetailsList.push(
+                `${spkReservation.namaPO} (${spkReservation.qtyReserved.toLocaleString()})`,
+              );
+            }
           }
         }
 
