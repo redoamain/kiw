@@ -1,3 +1,8 @@
+allowBuilds:
+  core-js: true
+  msw: false
+  sharp: false
+  unrs-resolver: false
 ignoredBuiltDependencies:
   - msw
   - sharp

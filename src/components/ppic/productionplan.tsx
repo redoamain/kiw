@@ -72,7 +72,9 @@ import {
   Table as TableIcon,
   ChevronUp, ChevronDown, ChevronsUpDown,
   Database,
-  Trash2
+  Trash2,
+  ChevronRight,
+  ChevronLeft
 } from "lucide-react";
 // Import itemsWithVariants di bagian atas file
 import {
@@ -919,8 +921,7 @@ const CommittedPOsPanel: React.FC<{
 };
 
 // ==================== KOMPONEN PREVIEW DIALOG ====================
-
-// Komponen HistoryPanel dengan Sheet (bukan modal)
+// Komponen HistoryPanel dengan Sheet (bukan modal) dan Pagination
 const HistoryPanel: React.FC<{
   calculations: any[];
   onLoadCalculation: (calculation: any) => void;
@@ -932,6 +933,21 @@ const HistoryPanel: React.FC<{
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [searchHistory, setSearchHistory] = useState("");
   const [dateFilter, setDateFilter] = useState("");
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Detect mobile screen
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Filter history berdasarkan search
   const filteredCalculations = useMemo(() => {
@@ -945,7 +961,8 @@ const HistoryPanel: React.FC<{
         (calc) =>
           calc.calculation_id?.toLowerCase().includes(term) ||
           calc.user_id?.toLowerCase().includes(term) ||
-          calc.notes?.toLowerCase().includes(term)
+          calc.notes?.toLowerCase().includes(term) ||
+          calc.calculation_name?.toLowerCase().includes(term)
       );
     }
     
@@ -958,10 +975,56 @@ const HistoryPanel: React.FC<{
     return filtered;
   }, [calculations, searchHistory, dateFilter]);
 
+  // Pagination calculations
+  const totalItems = filteredCalculations.length;
+  const totalPages = Math.ceil(totalItems / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedCalculations = filteredCalculations.slice(startIndex, endIndex);
+
+  // Reset to first page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchHistory, dateFilter]);
+
   const getStatusSummary = (calc: any) => {
     const total = calc.material_aman + calc.material_kurang + calc.material_habis;
     const amanPercent = total > 0 ? (calc.material_aman / total) * 100 : 0;
     return { total, amanPercent };
+  };
+
+  // Handle page change
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    // Scroll to top of table when page changes
+    const tableElement = document.getElementById('history-table');
+    if (tableElement) {
+      tableElement.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  // Handle page size change
+  const handlePageSizeChange = (newSize: number) => {
+    setPageSize(newSize);
+    setCurrentPage(1);
+  };
+
+  // Generate page numbers for pagination
+  const getPageNumbers = () => {
+    const pageNumbers = [];
+    const maxVisible = isMobile ? 3 : 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    
+    if (endPage - startPage + 1 < maxVisible) {
+      startPage = Math.max(1, endPage - maxVisible + 1);
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+      pageNumbers.push(i);
+    }
+    
+    return pageNumbers;
   };
 
   if (!expanded) {
@@ -1012,10 +1075,10 @@ const HistoryPanel: React.FC<{
         <CardContent>
           {/* Filter Section */}
           <div className="flex gap-4 mb-4 flex-wrap">
-            <div className="flex-1 relative min-w-[200px]">
+            <div className="flex-1 relative min-w-50">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Cari ID Perhitungan atau User..."
+                placeholder="Cari ID Perhitungan, Nama, atau User..."
                 value={searchHistory}
                 onChange={(e) => setSearchHistory(e.target.value)}
                 className="pl-8"
@@ -1043,123 +1106,263 @@ const HistoryPanel: React.FC<{
             )}
           </div>
 
+          {/* Page Size Selector and Info */}
+          {filteredCalculations.length > 0 && (
+            <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>Menampilkan</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                  className="border rounded px-2 py-1 text-sm"
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+                <span>data dari {totalItems} total</span>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                Halaman {currentPage} dari {totalPages || 1}
+              </div>
+            </div>
+          )}
+
           {filteredCalculations.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Database className="h-12 w-12 mx-auto mb-2 opacity-50" />
               <p>Belum ada data perhitungan yang tersimpan</p>
-              <p className="text-sm">Silahkan preview PO dan klik "Simpan ke Database"</p>
+              <p className="text-sm">Silahkan preview PO dan klik Simpan ke Database</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[50px]">No</TableHead>
-                    <TableHead>Nama Perhitungan</TableHead>
-                    <TableHead>Tanggal</TableHead>
-                    <TableHead>User</TableHead>
-                    <TableHead className="text-center">Total PO</TableHead>
-                    <TableHead className="text-center">Total Material</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Kebutuhan</TableHead>
-                    <TableHead className="text-right">Kekurangan</TableHead>
-                    <TableHead className="text-center">Aksi</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredCalculations.map((calc, idx) => {
-                    const { total, amanPercent } = getStatusSummary(calc);
-                    return (
-                      <TableRow key={calc.id}>
-                        <TableCell>{idx + 1}</TableCell>
-                        <TableCell>
-                          <div className="font-medium">
-                            {calc.calculation_name || calc.calculation_id}
-                          </div>
-                          <div className="text-xs text-muted-foreground font-mono">
-                            ID: {calc.calculation_id}
-                          </div>
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap">
-                          {new Date(calc.calculation_date).toLocaleString("id-ID")}
-                        </TableCell>
-                        <TableCell>{calc.user_id}</TableCell>
-                        <TableCell className="text-center font-bold">
-                          {calc.total_po}
-                        </TableCell>
-                        <TableCell className="text-center font-bold">
-                          {calc.total_materials}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1 flex-wrap">
-                            {calc.material_aman > 0 && (
-                              <Badge className="bg-green-500">
-                                ✅ {calc.material_aman}
-                              </Badge>
-                            )}
-                            {calc.material_kurang > 0 && (
-                              <Badge className="bg-orange-500">
-                                ⚠️ {calc.material_kurang}
-                              </Badge>
-                            )}
-                            {calc.material_habis > 0 && (
-                              <Badge className="bg-red-500">
-                                ❌ {calc.material_habis}
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="text-xs text-muted-foreground mt-1">
-                            Keamanan: {amanPercent.toFixed(0)}%
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {calc.total_kebutuhan?.toLocaleString() || 0}
-                        </TableCell>
-                        <TableCell className="text-right text-red-600 font-bold">
-                          {calc.total_kekurangan?.toLocaleString() || 0}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedCalc(calc);
-                                setDetailSheetOpen(true);
-                              }}
-                            >
-                              <Eye className="h-3 w-3 mr-1" />
-                              Detail
-                            </Button>
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => onLoadCalculation(calc)}
-                            >
-                              <Download className="h-3 w-3 mr-1" />
-                              Load
-                            </Button>
-                            {onDeleteCalculation && (
+            <>
+              <div className="overflow-x-auto" id="history-table">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12.5">No</TableHead>
+                      <TableHead>Nama Perhitungan</TableHead>
+                      <TableHead>Tanggal</TableHead>
+                      <TableHead>User</TableHead>
+                      <TableHead className="text-center">Total PO</TableHead>
+                      <TableHead className="text-center">Total Material</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Kebutuhan</TableHead>
+                      <TableHead className="text-right">Kekurangan</TableHead>
+                      <TableHead className="text-center">Aksi</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedCalculations.map((calc, idx) => {
+                      const { total, amanPercent } = getStatusSummary(calc);
+                      const globalIndex = startIndex + idx + 1;
+                      return (
+                        <TableRow key={calc.id}>
+                          <TableCell>{globalIndex}</TableCell>
+                          <TableCell>
+                            <div className="font-medium">
+                              {calc.calculation_name || calc.calculation_id}
+                            </div>
+                            <div className="text-xs text-muted-foreground font-mono">
+                              ID: {calc.calculation_id}
+                            </div>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {new Date(calc.calculation_date).toLocaleString("id-ID")}
+                          </TableCell>
+                          <TableCell>{calc.user_id}</TableCell>
+                          <TableCell className="text-center font-bold">
+                            {calc.total_po}
+                          </TableCell>
+                          <TableCell className="text-center font-bold">
+                            {calc.total_materials}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1 flex-wrap">
+                              {calc.material_aman > 0 && (
+                                <Badge className="bg-green-500">
+                                  ✅ {calc.material_aman}
+                                </Badge>
+                              )}
+                              {calc.material_kurang > 0 && (
+                                <Badge className="bg-orange-500">
+                                  ⚠️ {calc.material_kurang}
+                                </Badge>
+                              )}
+                              {calc.material_habis > 0 && (
+                                <Badge className="bg-red-500">
+                                  ❌ {calc.material_habis}
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Keamanan: {amanPercent.toFixed(0)}%
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {calc.total_kebutuhan?.toLocaleString() || 0}
+                          </TableCell>
+                          <TableCell className="text-right text-red-600 font-bold">
+                            {calc.total_kekurangan?.toLocaleString() || 0}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
                               <Button
-                                variant="destructive"
+                                variant="outline"
                                 size="sm"
                                 onClick={() => {
-                                  if (confirm(`Hapus perhitungan "${calc.calculation_name || calc.calculation_id}"?`)) {
-                                    onDeleteCalculation(calc.calculation_id);
-                                  }
+                                  setSelectedCalc(calc);
+                                  setDetailSheetOpen(true);
                                 }}
                               >
-                                <Trash2 className="h-3 w-3" />
+                                <Eye className="h-3 w-3 mr-1" />
+                                Detail
                               </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => onLoadCalculation(calc)}
+                              >
+                                <Download className="h-3 w-3 mr-1" />
+                                Load
+                              </Button>
+                              {onDeleteCalculation && (
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (confirm(`Hapus perhitungan "${calc.calculation_name || calc.calculation_id}"?`)) {
+                                      onDeleteCalculation(calc.calculation_id);
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination Component */}
+              {totalPages > 1 && (
+                <div className="flex justify-center items-center gap-2 mt-6 flex-wrap">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(1)}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" />
+                    <span className={isMobile ? "hidden" : "inline"}>First</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    <span className={isMobile ? "hidden" : "ml-1"}>Previous</span>
+                  </Button>
+                  
+                  <div className="flex gap-1">
+                    {currentPage > 2 && totalPages > 5 && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePageChange(1)}
+                        >
+                          1
+                        </Button>
+                        {currentPage > 3 && <span className="px-2 self-center">...</span>}
+                      </>
+                    )}
+                    
+                    {getPageNumbers().map((pageNum) => (
+                      <Button
+                        key={pageNum}
+                        variant={currentPage === pageNum ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => handlePageChange(pageNum)}
+                        className={currentPage === pageNum ? "bg-blue-600" : ""}
+                      >
+                        {pageNum}
+                      </Button>
+                    ))}
+                    
+                    {currentPage < totalPages - 1 && totalPages > 5 && (
+                      <>
+                        {currentPage < totalPages - 2 && <span className="px-2 self-center">...</span>}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handlePageChange(totalPages)}
+                        >
+                          {totalPages}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                  
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                  >
+                    <span className={isMobile ? "hidden" : "mr-1"}>Next</span>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(totalPages)}
+                    disabled={currentPage === totalPages}
+                  >
+                    <span className={isMobile ? "hidden" : "inline"}>Last</span>
+                    <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              )}
+
+              {/* Mobile optimized pagination - simple */}
+              {isMobile && totalPages > 1 && (
+                <div className="flex justify-center items-center gap-2 mt-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-sm">
+                    {currentPage} / {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
+
+              {/* Info text about visible data */}
+              <div className="text-center text-xs text-muted-foreground mt-4">
+                Menampilkan data {startIndex + 1} - {Math.min(endIndex, totalItems)} dari {totalItems} total perhitungan
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -1204,7 +1407,7 @@ const HistoryPanel: React.FC<{
             </SheetHeader>
           </div>
 
-          {/* Table Material Data */}
+          {/* Table Material Data with pagination in sheet */}
           <div className="flex-1 overflow-auto px-6 py-4 min-h-0">
             <div className="border rounded-md h-full">
               <div className="overflow-auto" style={{ maxHeight: "calc(90vh - 280px)" }}>
@@ -4847,12 +5050,12 @@ export default function ProductionPlanPage() {
       </div>
 
       {/* Committed PO Panel */}
-      <CommittedPOsPanel
+      {/* <CommittedPOsPanel
         committedPOs={committedPOs}
         stockReservations={stockReservations}
         onRefresh={refreshAllData}
         onUncommit={uncommitPO}
-      />
+      /> */}
       <HistoryPanel
         calculations={savedCalculations}
         onLoadCalculation={loadCalculationToPreview}
@@ -5030,15 +5233,15 @@ export default function ProductionPlanPage() {
         <>
           <Card>
             <div className="w-full overflow-x-auto">
-              <Table className="min-w-[800px] lg:min-w-full">
+              <Table className="min-w-200 lg:min-w-full">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[50px]">Pilih</TableHead>
-                    <TableHead className="w-[130px]">No SPK</TableHead>
-                    <TableHead className="w-[100px]">Tanggal Order</TableHead>
-                    <TableHead className="w-[110px]">Nama PO</TableHead>
+                    <TableHead className="w-12.5">Pilih</TableHead>
+                    <TableHead className="w-32.5">No SPK</TableHead>
+                    <TableHead className="w-25">Tanggal Order</TableHead>
+                    <TableHead className="w-27.5">Nama PO</TableHead>
 
-                    <TableHead className="w-[120px] text-center">
+                    <TableHead className="w-30 text-center">
                       Aksi
                     </TableHead>
                   </TableRow>
@@ -5059,7 +5262,7 @@ export default function ProductionPlanPage() {
     ${plan.committed ? "bg-green-50 opacity-70" : ""}
   `}
                       >
-                        <TableCell className="w-[50px] align-top">
+                        <TableCell className="w-12.5 align-top">
                           <Checkbox
                             checked={plan.selected}
                             onCheckedChange={() => toggleSelection(idx)}
@@ -5067,7 +5270,7 @@ export default function ProductionPlanPage() {
                           />
                         </TableCell>
 
-                        <TableCell className="w-[130px] align-top font-medium">
+                        <TableCell className="w-32.5 align-top font-medium">
                           <div className="whitespace-nowrap">
                             {plan.order.No_SPK}
                             {plan.committed && (
@@ -5107,13 +5310,13 @@ export default function ProductionPlanPage() {
                           </div>
                         </TableCell>
 
-                        <TableCell className="w-[100px] align-top whitespace-nowrap">
+                        <TableCell className="w-25 align-top whitespace-nowrap">
                           {plan.order.Tanggal_Order}
                         </TableCell>
 
                         <TableCell className="align-top">
                           <div
-                            className="font-medium truncate max-w-[250px]"
+                            className="font-medium truncate max-w-62.5"
                             title={plan.order.Nama_PO}
                           >
                             {plan.order.Nama_PO}
@@ -5123,7 +5326,7 @@ export default function ProductionPlanPage() {
                               {plan.order.combinedItems.map((item, i) => (
                                 <div
                                   key={i}
-                                  className="truncate max-w-[200px]"
+                                  className="truncate max-w-50"
                                   title={`${item.Kode_Barang} (QTY: ${item.QTY})`}
                                 >
                                   • {item.Kode_Barang} (QTY: {item.QTY})
@@ -5132,7 +5335,7 @@ export default function ProductionPlanPage() {
                             </div>
                           )}
                         </TableCell>
-<TableCell className="w-[120px] align-top text-center">
+<TableCell className="w-30 align-top text-center">
   {plan.committed ? (
     <div className="flex gap-2 justify-center">
       <Button
