@@ -4388,14 +4388,25 @@ export default function ProductionPlanPage() {
       // ==================== BUAT PREVIEW DATA DENGAN FORMAT BARU ====================
       const previewMaterialData: any[] = [];
 
+      // BUAT SET UNTUK MENGECEK SPK YANG SEDANG DIEXPORT
+      const exportingSPKsSet = new Set(
+        selectedOrders.map((order) => order.order.No_SPK),
+      );
+
       for (const agg of materialAggMap.values()) {
         const barangJadiDetails: string[] = [];
         for (const [kode, info] of agg.barangJadiSet) {
           barangJadiDetails.push(`${kode} (${info.qty.toLocaleString()})`);
         }
-        // BUAT DETAIL RESERVED OLEH SPK - FORMAT SEDERHANA (Nama PO dan QTY)
+
+        // BUAT DETAIL RESERVED OLEH SPK - HANYA DARI PO LAIN (BUKAN YANG DIEXPORT)
         const reservationDetailsList: string[] = [];
         for (const [spk, detailsMap] of spkReservationDetails) {
+          // 🔥 PERBAIKAN: SKIP SPK YANG SEDANG DIEXPORT
+          if (exportingSPKsSet.has(spk)) {
+            continue;
+          }
+
           const materialDetail = detailsMap.get(agg.kode);
           if (materialDetail && materialDetail.taken > 0) {
             // Cari Nama PO dari order yang sesuai
@@ -4414,7 +4425,6 @@ export default function ProductionPlanPage() {
             ? reservationDetailsList.join("\n")
             : "-";
 
-      
         const variantInfo = getVariantInfo(agg.kode);
 
         const totalDibutuhkan = agg.totalNeeded + agg.qtyReserved;
@@ -4776,7 +4786,7 @@ export default function ProductionPlanPage() {
                         className="min-w-[250px] cursor-pointer"
                         onClick={() => handleSort("Reserved Oleh SPK")}
                       >
-                        Reserved Oleh SPK {getSortIcon("Reserved Oleh SPK")}
+                        Reserved Oleh PO {getSortIcon("Reserved Oleh SPK")}
                       </TableHead>
                       <TableHead
                         className="min-w-[100px] cursor-pointer"
