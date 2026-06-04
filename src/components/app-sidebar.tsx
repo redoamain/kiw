@@ -31,8 +31,9 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collap
 import Link from "next/link";
 import { Label } from "./ui/label";
 
-const masterItems = [ 
+const masterItems = [
   { href: "/dashboard/", label: "Stock Gudang", icon: Warehouse },
+  { href: "https://ingu.citiplumb.id", label: "INGU", icon: Warehouse },
   { href: "/dashboard/bom", label: "BOM", icon: FileText },
   { href: "/dashboard/barang", label: "Master Barang", icon: Package },
   { href: "/dashboard/cekppn", label: "Hitung PPN", icon: Calculator },
