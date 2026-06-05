@@ -108,6 +108,10 @@ interface BomItem {
   NamaJenis: string;
   ParentItemID?: string;
   children?: BomItem[];
+  _uniqueKey?: string;
+  _originalIndex?: number;
+  _isOverridden?: boolean;
+  _originalItemId?: string;
 }
 
 interface StockItem {
@@ -173,11 +177,14 @@ interface StockReservation {
   namaPO?: string;
 }
 interface BomOverride {
+  id?: number;
   originalItemId: string;
   replacementItemId: string;
   replacementItemName: string;
   replacementItemName2: string;
   isActive: boolean;
+  targetKodeBarang?: string; // TAMBAHKAN: hanya berlaku untuk produk tertentu
+  targetKodeBarangs?: string[]; // ATAU untuk multiple produk
 }
 // ==================== FUNGSI BANTU ====================
 const normalizeItemId = (id: string): string => {
@@ -1581,15 +1588,16 @@ const HistoryPanel: React.FC<{
     </>
   );
 };
-
+// ==================== KOMPONEN BOM OVERRIDE MANAGER (DENGAN DATABASE) - LENGKAP ====================
 const BomOverrideManager: React.FC<{
   overrides: BomOverride[];
-  onAdd: (override: BomOverride) => void;
-  onUpdate: (index: number, override: BomOverride) => void;
-  onDelete: (index: number) => void;
-  onToggle: (index: number) => void;
+  onAdd: (override: BomOverride) => Promise<void>;
+  onUpdate: (index: number, override: BomOverride) => Promise<void>;
+  onDelete: (index: number, id: number) => Promise<void>;
+  onToggle: (index: number, id: number, isActive: boolean) => Promise<void>;
   onClose: () => void;
-}> = ({ overrides, onAdd, onUpdate, onDelete, onToggle, onClose }) => {
+  loading?: boolean;
+}> = ({ overrides, onAdd, onUpdate, onDelete, onToggle, onClose, loading = false }) => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newOverride, setNewOverride] = useState<Partial<BomOverride>>({
     originalItemId: "",
@@ -1601,39 +1609,89 @@ const BomOverrideManager: React.FC<{
   const [searchOriginal, setSearchOriginal] = useState("");
   const [searchReplacement, setSearchReplacement] = useState("");
   const [searchResults, setSearchResults] = useState<
-    Array<{ itemid: string; itemname: string }>
+    Array<{ itemid: string; itemname: string; itemname2?: string }>
   >([]);
-  const [loading, setLoading] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [selectedField, setSelectedField] = useState<
     "original" | "replacement"
   >("original");
+  const [editId, setEditId] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  
+  // ==================== TAMBAHKAN STATE UNTUK TARGET BOM ====================
+  const [targetType, setTargetType] = useState<"all" | "specific">("all");
+  const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
+  const [availableProducts, setAvailableProducts] = useState<Array<{kode: string, nama: string}>>([]);
+  const [searchProduct, setSearchProduct] = useState("");
+  const [loadingProducts, setLoadingProducts] = useState(false);
 
-  const searchItems = async (
-    query: string,
-    field: "original" | "replacement",
-  ) => {
+  // Load daftar produk yang tersedia dari API
+  const loadAvailableProducts = async () => {
+    setLoadingProducts(true);
+    try {
+      // Ambil dari API /api/ppic/products atau dari data orders yang sudah ada
+      // Karena mungkin belum ada API, kita bisa ambil dari orders yang sudah dimuat
+      // Untuk sementara, kita buat API call terlebih dahulu
+      const response = await fetch("/api/ppic/products");
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          setAvailableProducts(result.data);
+          return;
+        }
+      }
+      // Fallback: ambil dari sessionStorage atau buat array kosong
+      const cachedProducts = sessionStorage.getItem("availableProducts");
+      if (cachedProducts) {
+        setAvailableProducts(JSON.parse(cachedProducts));
+      } else {
+        // Jika tidak ada API, kita bisa fetch dari orders yang ada di komponen induk
+        // Tapi karena ini komponen terpisah, kita akan panggil props tambahan
+        console.warn("Tidak dapat memuat daftar produk");
+      }
+    } catch (error) {
+      console.error("Error loading products:", error);
+    } finally {
+      setLoadingProducts(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAvailableProducts();
+  }, []);
+
+  // Simpan ke sessionStorage
+  useEffect(() => {
+    if (availableProducts.length > 0) {
+      sessionStorage.setItem("availableProducts", JSON.stringify(availableProducts));
+    }
+  }, [availableProducts]);
+
+  const searchItems = async (query: string) => {
     if (!query || query.length < 2) {
       setSearchResults([]);
       return;
     }
 
-    setLoading(true);
+    setSearching(true);
     try {
       const response = await fetch(
-        `/api/stock/ppic?itemid=${encodeURIComponent(query)}`,
+        `/api/stock/ppic?itemid=${encodeURIComponent(query)}&limit=20`,
       );
       const result = await response.json();
-      let items: Array<{ itemid: string; itemname: string }> = [];
+      let items: Array<{ itemid: string; itemname: string; itemname2?: string }> = [];
 
       if (Array.isArray(result)) {
         items = result.map((r: any) => ({
           itemid: r.KodeBarang || r.itemid || r.ItemID,
           itemname: r.NamaBarang || r.itemname || r.ItemName,
+          itemname2: r.NamaBarang2 || r.itemname2 || r.ItemName2,
         }));
       } else if (result.data && Array.isArray(result.data)) {
         items = result.data.map((r: any) => ({
           itemid: r.KodeBarang || r.itemid || r.ItemID,
           itemname: r.NamaBarang || r.itemname || r.ItemName,
+          itemname2: r.NamaBarang2 || r.itemname2 || r.ItemName2,
         }));
       }
 
@@ -1642,47 +1700,129 @@ const BomOverrideManager: React.FC<{
       console.error("Error searching items:", error);
       setSearchResults([]);
     } finally {
-      setLoading(false);
+      setSearching(false);
     }
   };
 
-  const handleSelectItem = (item: { itemid: string; itemname: string }) => {
+  const handleSelectItem = (item: { itemid: string; itemname: string; itemname2?: string }) => {
+    console.log("Selected item:", item, "Field:", selectedField);
+    
     if (selectedField === "original") {
-      setNewOverride((prev) => ({
-        ...prev,
-        originalItemId: item.itemid,
-        replacementItemName: "",
-        replacementItemName2: "",
-      }));
+      setNewOverride((prev) => {
+        const updated = {
+          ...prev,
+          originalItemId: item.itemid,
+        };
+        console.log("Updated newOverride (original):", updated);
+        return updated;
+      });
       setSearchOriginal(item.itemid);
     } else {
-      setNewOverride((prev) => ({
-        ...prev,
-        replacementItemId: item.itemid,
-        replacementItemName: item.itemname,
-        replacementItemName2: item.itemname,
-      }));
+      setNewOverride((prev) => {
+        const updated = {
+          ...prev,
+          replacementItemId: item.itemid,
+          replacementItemName: item.itemname,
+          replacementItemName2: item.itemname2 || item.itemname,
+        };
+        console.log("Updated newOverride (replacement):", updated);
+        return updated;
+      });
       setSearchReplacement(item.itemid);
     }
     setSearchResults([]);
   };
 
-  const handleAddOverride = () => {
-    if (!newOverride.originalItemId || !newOverride.replacementItemId) {
-      alert("Mohon isi item asli dan item pengganti");
+  const handleAddOrUpdateOverride = async () => {
+    const originalId = newOverride.originalItemId?.trim();
+    const replacementId = newOverride.replacementItemId?.trim();
+
+    if (!originalId || originalId === "") {
+      alert("Mohon pilih item asli terlebih dahulu");
       return;
     }
 
-    onAdd({
-      originalItemId: newOverride.originalItemId,
-      replacementItemId: newOverride.replacementItemId,
-      replacementItemName:
-        newOverride.replacementItemName || newOverride.replacementItemId,
-      replacementItemName2:
-        newOverride.replacementItemName2 || newOverride.replacementItemId,
-      isActive: true,
-    });
+    if (!replacementId || replacementId === "") {
+      alert("Mohon pilih item pengganti terlebih dahulu");
+      return;
+    }
 
+    setSaving(true);
+    try {
+      const overrideData: any = {
+        originalItemId: originalId,
+        replacementItemId: replacementId,
+        replacementItemName: newOverride.replacementItemName || replacementId,
+        replacementItemName2: newOverride.replacementItemName2 || replacementId,
+        isActive: newOverride.isActive ?? true,
+      };
+
+      // Tambahkan target jika specific
+      if (targetType === "specific" && selectedTargets.length > 0) {
+        if (selectedTargets.length === 1) {
+          overrideData.targetKodeBarang = selectedTargets[0];
+        } else {
+          overrideData.targetKodeBarangs = selectedTargets;
+        }
+      }
+
+      if (editId !== null) {
+        await onUpdate(editId, { ...overrideData, id: editId });
+      } else {
+        await onAdd(overrideData);
+      }
+
+      // Reset form
+      setNewOverride({
+        originalItemId: "",
+        replacementItemId: "",
+        replacementItemName: "",
+        replacementItemName2: "",
+        isActive: true,
+      });
+      setSelectedTargets([]);
+      setTargetType("all");
+      setShowAddForm(false);
+      setSearchOriginal("");
+      setSearchReplacement("");
+      setEditId(null);
+    } catch (error) {
+      console.error("Error saving override:", error);
+      alert("Gagal menyimpan perubahan BOM: " + (error instanceof Error ? error.message : "Unknown error"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEdit = (override: BomOverride, index: number) => {
+    setEditId(override.id || null);
+    setNewOverride({
+      originalItemId: override.originalItemId,
+      replacementItemId: override.replacementItemId,
+      replacementItemName: override.replacementItemName,
+      replacementItemName2: override.replacementItemName2,
+      isActive: override.isActive,
+    });
+    setSearchOriginal(override.originalItemId);
+    setSearchReplacement(override.replacementItemId);
+    
+    // Parse target yang sudah ada
+    if ((override as any).targetKodeBarang) {
+      setTargetType("specific");
+      setSelectedTargets([(override as any).targetKodeBarang]);
+    } else if ((override as any).targetKodeBarangs && (override as any).targetKodeBarangs.length > 0) {
+      setTargetType("specific");
+      setSelectedTargets((override as any).targetKodeBarangs);
+    } else {
+      setTargetType("all");
+      setSelectedTargets([]);
+    }
+    
+    setShowAddForm(true);
+  };
+
+  const handleCancelEdit = () => {
+    setEditId(null);
     setNewOverride({
       originalItemId: "",
       replacementItemId: "",
@@ -1690,9 +1830,11 @@ const BomOverrideManager: React.FC<{
       replacementItemName2: "",
       isActive: true,
     });
-    setShowAddForm(false);
     setSearchOriginal("");
     setSearchReplacement("");
+    setSelectedTargets([]);
+    setTargetType("all");
+    setShowAddForm(false);
   };
 
   return (
@@ -1705,8 +1847,8 @@ const BomOverrideManager: React.FC<{
           </SheetTitle>
           <SheetDescription>
             Ganti material tertentu dengan material lain untuk kebutuhan
-            produksi khusus. Perubahan ini akan berlaku untuk semua perhitungan
-            dan export.
+            produksi khusus. Perubahan ini akan tersimpan di database dan tidak
+            hilang meskipun halaman di-refresh.
           </SheetDescription>
         </SheetHeader>
 
@@ -1718,13 +1860,22 @@ const BomOverrideManager: React.FC<{
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setShowAddForm(!showAddForm)}
+                onClick={() => {
+                  setEditId(null);
+                  setShowAddForm(!showAddForm);
+                }}
+                disabled={loading || saving}
               >
                 + Tambah Perubahan
               </Button>
             </div>
 
-            {overrides.length === 0 ? (
+            {loading ? (
+              <div className="text-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin mx-auto" />
+                <p className="mt-2 text-muted-foreground">Memuat data...</p>
+              </div>
+            ) : overrides.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground border rounded-lg">
                 <TreePine className="h-12 w-12 mx-auto mb-2 opacity-50" />
                 <p>Belum ada perubahan BOM</p>
@@ -1734,7 +1885,7 @@ const BomOverrideManager: React.FC<{
               <div className="space-y-2">
                 {overrides.map((override, idx) => (
                   <Card
-                    key={idx}
+                    key={override.id || idx}
                     className={!override.isActive ? "opacity-60" : ""}
                   >
                     <CardContent className="pt-4">
@@ -1749,7 +1900,7 @@ const BomOverrideManager: React.FC<{
                               {override.isActive ? "AKTIF" : "NONAKTIF"}
                             </Badge>
                             <span className="text-xs text-muted-foreground">
-                              #{idx + 1}
+                              ID: {override.id || idx + 1}
                             </span>
                           </div>
                           <div className="grid grid-cols-2 gap-2 text-sm">
@@ -1757,7 +1908,7 @@ const BomOverrideManager: React.FC<{
                               <span className="text-muted-foreground">
                                 Item Asli:
                               </span>
-                              <div className="font-mono text-xs">
+                              <div className="font-mono text-xs break-all">
                                 {override.originalItemId}
                               </div>
                             </div>
@@ -1765,7 +1916,7 @@ const BomOverrideManager: React.FC<{
                               <span className="text-muted-foreground">
                                 Item Pengganti:
                               </span>
-                              <div className="font-mono text-xs">
+                              <div className="font-mono text-xs break-all">
                                 {override.replacementItemId}
                               </div>
                               <div className="text-xs truncate">
@@ -1773,12 +1924,44 @@ const BomOverrideManager: React.FC<{
                               </div>
                             </div>
                           </div>
+                          {/* Tampilkan target jika ada */}
+                          {((override as any).targetKodeBarang || (override as any).targetKodeBarangs) && (
+                            <div className="mt-2 text-xs text-blue-600">
+                              🎯 Berlaku untuk:{' '}
+                              {(override as any).targetKodeBarang || 
+                               (override as any).targetKodeBarangs?.join(", ")}
+                            </div>
+                          )}
                         </div>
                         <div className="flex gap-1">
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => onToggle(idx)}
+                            onClick={() => handleEdit(override, idx)}
+                            disabled={saving}
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="h-3 w-3"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                              />
+                            </svg>
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              onToggle(idx, override.id!, !override.isActive)
+                            }
+                            disabled={saving}
                           >
                             {override.isActive ? (
                               <Lock className="h-3 w-3" />
@@ -1795,9 +1978,10 @@ const BomOverrideManager: React.FC<{
                                   `Hapus perubahan BOM untuk ${override.originalItemId}?`,
                                 )
                               ) {
-                                onDelete(idx);
+                                onDelete(idx, override.id!);
                               }
                             }}
+                            disabled={saving}
                           >
                             <Trash2 className="h-3 w-3" />
                           </Button>
@@ -1809,12 +1993,14 @@ const BomOverrideManager: React.FC<{
               </div>
             )}
           </div>
-
-          {/* Form Tambah Override */}
+          
+          {/* Form Tambah/Edit Override */}
           {showAddForm && (
             <div className="border rounded-lg p-4 space-y-3">
               <h3 className="font-semibold text-sm">
-                Tambah Perubahan BOM Baru
+                {editId !== null
+                  ? "Edit Perubahan BOM"
+                  : "Tambah Perubahan BOM Baru"}
               </h3>
 
               {/* Item Asli */}
@@ -1827,45 +2013,19 @@ const BomOverrideManager: React.FC<{
                     onChange={(e) => {
                       setSearchOriginal(e.target.value);
                       setSelectedField("original");
-                      searchItems(e.target.value, "original");
+                      searchItems(e.target.value);
                     }}
+                    disabled={saving}
                   />
                   {searchResults.length > 0 && selectedField === "original" && (
                     <div className="absolute z-10 top-full left-0 right-0 bg-white border rounded-md shadow-lg mt-1 max-h-48 overflow-auto">
-                      {searchResults.map((item) => (
-                        <div
-                          key={item.itemid}
-                          className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm"
-                          onClick={() => handleSelectItem(item)}
-                        >
-                          <div className="font-mono text-xs">{item.itemid}</div>
-                          <div className="text-xs truncate">
-                            {item.itemname}
-                          </div>
+                      {searching ? (
+                        <div className="px-3 py-2 text-center text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
+                          Mencari...
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Item Pengganti */}
-              <div>
-                <Label>Item Pengganti</Label>
-                <div className="relative">
-                  <Input
-                    placeholder="Cari item pengganti..."
-                    value={searchReplacement}
-                    onChange={(e) => {
-                      setSearchReplacement(e.target.value);
-                      setSelectedField("replacement");
-                      searchItems(e.target.value, "replacement");
-                    }}
-                  />
-                  {searchResults.length > 0 &&
-                    selectedField === "replacement" && (
-                      <div className="absolute z-10 top-full left-0 right-0 bg-white border rounded-md shadow-lg mt-1 max-h-48 overflow-auto">
-                        {searchResults.map((item) => (
+                      ) : (
+                        searchResults.map((item) => (
                           <div
                             key={item.itemid}
                             className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm"
@@ -1878,57 +2038,218 @@ const BomOverrideManager: React.FC<{
                               {item.itemname}
                             </div>
                           </div>
-                        ))}
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                {newOverride.originalItemId && (
+                  <div className="mt-1 text-xs text-green-600">
+                    ✓ Item asli dipilih: {newOverride.originalItemId}
+                  </div>
+                )}
+              </div>
+
+              {/* Item Pengganti */}
+              <div>
+                <Label>Item Pengganti</Label>
+                <div className="relative">
+                  <Input
+                    placeholder="Cari item pengganti..."
+                    value={searchReplacement}
+                    onChange={(e) => {
+                      setSearchReplacement(e.target.value);
+                      setSelectedField("replacement");
+                      searchItems(e.target.value);
+                    }}
+                    disabled={saving}
+                  />
+                  {searchResults.length > 0 &&
+                    selectedField === "replacement" && (
+                      <div className="absolute z-10 top-full left-0 right-0 bg-white border rounded-md shadow-lg mt-1 max-h-48 overflow-auto">
+                        {searching ? (
+                          <div className="px-3 py-2 text-center text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
+                            Mencari...
+                          </div>
+                        ) : (
+                          searchResults.map((item) => (
+                            <div
+                              key={item.itemid}
+                              className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm"
+                              onClick={() => handleSelectItem(item)}
+                            >
+                              <div className="font-mono text-xs">
+                                {item.itemid}
+                              </div>
+                              <div className="text-xs truncate">
+                                {item.itemname}
+                              </div>
+                              {item.itemname2 && (
+                                <div className="text-xs text-muted-foreground">
+                                  {item.itemname2}
+                                </div>
+                              )}
+                            </div>
+                          ))
+                        )}
                       </div>
                     )}
                 </div>
+                {newOverride.replacementItemId && (
+                  <div className="mt-1 text-xs text-green-600">
+                    ✓ Item pengganti dipilih: {newOverride.replacementItemId} -{" "}
+                    {newOverride.replacementItemName}
+                  </div>
+                )}
               </div>
 
+              {/* ==================== TARGET BOM (TAMBAHKAN INI) ==================== */}
+              <div>
+                <Label>Berlaku Untuk</Label>
+                <Select 
+                  value={targetType} 
+                  onValueChange={(val: "all" | "specific") => setTargetType(val)}
+                  disabled={saving}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pilih cakupan" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Semua BOM (Global)</SelectItem>
+                    <SelectItem value="specific">Hanya BOM Tertentu</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {targetType === "specific" && (
+                <div>
+                  <Label>Pilih BOM/Produk</Label>
+                  <div className="relative">
+                    <Input
+                      placeholder="Cari produk..."
+                      value={searchProduct}
+                      onChange={(e) => setSearchProduct(e.target.value)}
+                      disabled={saving || loadingProducts}
+                    />
+                    {searchProduct && (
+                      <div className="absolute z-10 top-full left-0 right-0 bg-white border rounded-md shadow-lg mt-1 max-h-48 overflow-auto">
+                        {loadingProducts ? (
+                          <div className="px-3 py-2 text-center text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
+                            Memuat produk...
+                          </div>
+                        ) : (
+                          availableProducts
+                            .filter(p => 
+                              p.kode.toLowerCase().includes(searchProduct.toLowerCase()) || 
+                              p.nama.toLowerCase().includes(searchProduct.toLowerCase())
+                            )
+                            .map((product) => (
+                              <div
+                                key={product.kode}
+                                className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm"
+                                onClick={() => {
+                                  if (!selectedTargets.includes(product.kode)) {
+                                    setSelectedTargets([...selectedTargets, product.kode]);
+                                  }
+                                  setSearchProduct("");
+                                }}
+                              >
+                                <div className="font-mono text-xs">{product.kode}</div>
+                                <div className="text-xs truncate">{product.nama}</div>
+                              </div>
+                            ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {selectedTargets.map((target) => (
+                      <Badge key={target} variant="secondary" className="gap-1">
+                        {target}
+                        <button
+                          onClick={() => setSelectedTargets(selectedTargets.filter(t => t !== target))}
+                          className="ml-1 hover:text-red-500"
+                        >
+                          ×
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                  {selectedTargets.length === 0 && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Belum ada produk dipilih. Override tidak akan berlaku jika kosong.
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="flex gap-2 pt-2">
-                <Button size="sm" onClick={handleAddOverride}>
-                  Simpan Perubahan
+                <Button
+                  size="sm"
+                  onClick={handleAddOrUpdateOverride}
+                  disabled={
+                    saving ||
+                    !newOverride.originalItemId ||
+                    !newOverride.replacementItemId
+                  }
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      Menyimpan...
+                    </>
+                  ) : editId !== null ? (
+                    "Update Perubahan"
+                  ) : (
+                    "Simpan Perubahan"
+                  )}
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setShowAddForm(false);
-                    setNewOverride({
-                      originalItemId: "",
-                      replacementItemId: "",
-                      replacementItemName: "",
-                      replacementItemName2: "",
-                      isActive: true,
-                    });
-                    setSearchOriginal("");
-                    setSearchReplacement("");
-                  }}
+                  onClick={handleCancelEdit}
+                  disabled={saving}
                 >
                   Batal
                 </Button>
               </div>
             </div>
           )}
-
+          
           {/* Informasi */}
           <Alert>
             <Info className="h-4 w-4" />
-            <AlertTitle>Informasi</AlertTitle>
+            <AlertTitle>Informasi Penting</AlertTitle>
             <AlertDescription className="text-xs">
               <ul className="list-disc list-inside space-y-1">
                 <li>
-                  Perubahan BOM berlaku untuk semua perhitungan material dan
-                  export
+                  ⚠️ Perubahan BOM bersifat <strong>SPESIFIK per ITEM</strong> -
+                  hanya item yang dipilih yang akan diganti
                 </li>
                 <li>
-                  Anda dapat mengaktifkan/nonaktifkan perubahan kapan saja
+                  ✅ Contoh: Jika Anda mengatur override untuk item "RAW-001"
+                  diganti "RAW-002", maka hanya item "RAW-001" yang akan berubah
+                  di BOM
                 </li>
                 <li>
-                  Item asli akan diganti dengan item pengganti di semua level
-                  BOM
+                  ✅ Item lain yang tidak masuk dalam daftar override akan tetap
+                  menggunakan item asli dari BOM
                 </li>
                 <li>
-                  Perubahan ini tidak mempengaruhi data master BOM yang asli
+                  🎯 Anda juga dapat membatasi override hanya untuk BOM/produk tertentu
+                </li>
+                <li>
+                  ✅ Perubahan tersimpan di DATABASE, tidak akan hilang meskipun
+                  refresh halaman
+                </li>
+                <li>
+                  ✅ Anda dapat mengaktifkan/nonaktifkan perubahan kapan saja
+                </li>
+                <li>
+                  ✅ Satu item hanya bisa memiliki SATU override aktif (jika
+                  ingin mengganti, edit atau nonaktifkan yang lama)
                 </li>
               </ul>
             </AlertDescription>
@@ -1936,7 +2257,9 @@ const BomOverrideManager: React.FC<{
         </div>
 
         <SheetFooter>
-          <Button onClick={onClose}>Tutup</Button>
+          <Button onClick={onClose} disabled={saving}>
+            Tutup
+          </Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>
@@ -1978,42 +2301,297 @@ export default function ProductionPlanPage() {
   const [savedCalculations, setSavedCalculations] = useState<any[]>([]);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [bomOverrides, setBomOverrides] = useState<BomOverride[]>([]);
+  const [loadingOverrides, setLoadingOverrides] = useState(false);
+  // Di bagian state declarations, tambahkan:
   const [bomOverrideDialog, setBomOverrideDialog] = useState({
     open: false,
     originalItemId: "",
     originalItemName: "",
     currentReplacement: "",
   });
-  // Fungsi untuk menerapkan BOM override pada BOM
-  const applyBomOverrides = (bomFlat: BomItem[]): BomItem[] => {
+ const loadBomOverridesFromDatabase = useCallback(async () => {
+   setLoadingOverrides(true);
+   try {
+     const response = await fetch("/api/ppic/bom-overrides");
+     if (!response.ok) {
+       throw new Error(`HTTP error! status: ${response.status}`);
+     }
+     const result = await response.json();
+
+     if (result.success && Array.isArray(result.data)) {
+       const overrides = result.data.map((item: any) => ({
+         id: item.id,
+         originalItemId: item.original_item_id,
+         replacementItemId: item.replacement_item_id,
+         replacementItemName:
+           item.replacement_item_name || item.replacement_item_id,
+         replacementItemName2:
+           item.replacement_item_name2 || item.replacement_item_id,
+         isActive: item.is_active === 1 || item.is_active === true,
+         targetKodeBarang: item.target_kode_barang,
+         targetKodeBarangs: item.target_kode_barangs
+           ? JSON.parse(item.target_kode_barangs)
+           : undefined,
+       }));
+       setBomOverrides(overrides);
+
+       // Simpan ke localStorage sebagai backup
+       localStorage.setItem("bomOverrides", JSON.stringify(overrides));
+     } else {
+       console.warn("Invalid response format:", result);
+       const savedOverrides = localStorage.getItem("bomOverrides");
+       if (savedOverrides) {
+         setBomOverrides(JSON.parse(savedOverrides));
+       }
+     }
+   } catch (error) {
+     console.error("Error loading BOM overrides from database:", error);
+     const savedOverrides = localStorage.getItem("bomOverrides");
+     if (savedOverrides) {
+       try {
+         setBomOverrides(JSON.parse(savedOverrides));
+       } catch (e) {
+         console.error("Error loading from localStorage:", e);
+       }
+     }
+   } finally {
+     setLoadingOverrides(false);
+   }
+ }, []);
+  // Fungsi untuk menambah BOM override
+  // Di fungsi addBomOverride, pastikan response data memiliki id
+  const addBomOverride = async (override: BomOverride) => {
+    try {
+      const response = await fetch("/api/ppic/bom-overrides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          originalItemId: override.originalItemId,
+          replacementItemId: override.replacementItemId,
+          replacementItemName: override.replacementItemName,
+          replacementItemName2: override.replacementItemName2,
+          isActive: override.isActive,
+          createdBy: "current_user",
+        }),
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setBomOverrides((prev) => [
+          ...prev,
+          {
+            ...override,
+            id: result.data?.id || Date.now(), // Pastikan ada id
+          },
+        ]);
+        showToast(
+          `✅ Perubahan BOM untuk ${override.originalItemId} berhasil ditambahkan`,
+          "success",
+        );
+        await refreshAllData();
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error("Error adding BOM override:", error);
+      showToast(`❌ Gagal menambahkan perubahan BOM`, "error");
+    }
+  };
+
+  // Fungsi untuk update BOM override
+  const updateBomOverride = async (index: number, override: BomOverride) => {
+    try {
+      const response = await fetch("/api/ppic/bom-overrides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: override.id,
+          originalItemId: override.originalItemId,
+          replacementItemId: override.replacementItemId,
+          replacementItemName: override.replacementItemName,
+          replacementItemName2: override.replacementItemName2,
+          isActive: override.isActive,
+        }),
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setBomOverrides((prev) =>
+          prev.map((o, i) => (i === index ? override : o)),
+        );
+        showToast(
+          `✅ Perubahan BOM untuk ${override.originalItemId} berhasil diupdate`,
+          "success",
+        );
+        await refreshAllData();
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error("Error updating BOM override:", error);
+      showToast(`❌ Gagal mengupdate perubahan BOM`, "error");
+    }
+  };
+
+  // Fungsi untuk delete BOM override
+  const deleteBomOverride = async (index: number, id: number) => {
+    try {
+      const response = await fetch(`/api/ppic/bom-overrides?id=${id}`, {
+        method: "DELETE",
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        const deletedOverride = bomOverrides[index];
+        setBomOverrides((prev) => prev.filter((_, i) => i !== index));
+        showToast(
+          `✅ Perubahan BOM untuk ${deletedOverride.originalItemId} berhasil dihapus`,
+          "success",
+        );
+        await refreshAllData();
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error("Error deleting BOM override:", error);
+      showToast(`❌ Gagal menghapus perubahan BOM`, "error");
+    }
+  };
+
+  // Fungsi untuk toggle active status
+  const toggleBomOverride = async (
+    index: number,
+    id: number,
+    isActive: boolean,
+  ) => {
+    try {
+      const response = await fetch("/api/ppic/bom-overrides", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, isActive }),
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setBomOverrides((prev) =>
+          prev.map((o, i) => (i === index ? { ...o, isActive } : o)),
+        );
+        showToast(
+          `✅ Perubahan BOM ${isActive ? "diaktifkan" : "dinonaktifkan"}`,
+          "success",
+        );
+        await refreshAllData();
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      console.error("Error toggling BOM override:", error);
+      showToast(`❌ Gagal mengubah status BOM override`, "error");
+    }
+  };
+
+  // Load BOM overrides saat komponen mount
+  useEffect(() => {
+    loadBomOverridesFromDatabase();
+  }, [loadBomOverridesFromDatabase]);
+
+  // Simpan ke localStorage sebagai backup saat overrides berubah (opsional)
+  useEffect(() => {
+    localStorage.setItem("bomOverrides", JSON.stringify(bomOverrides));
+  }, [bomOverrides]);
+  // Fungsi untuk menerapkan BOM override pada BOM (HANYA UNTUK BOM TERTENTU)
+  const applyBomOverrides = (
+    bomFlat: BomItem[],
+    kodeBarang?: string,
+  ): BomItem[] => {
     if (!bomOverrides.length) return bomFlat;
 
     const activeOverrides = bomOverrides.filter((o) => o.isActive);
     if (!activeOverrides.length) return bomFlat;
 
-    // Buat map untuk override
+    // Filter override berdasarkan target kode barang
+    let applicableOverrides = activeOverrides;
+
+    if (kodeBarang) {
+      // Hanya ambil override yang:
+      // 1. Tidak memiliki target (global) ATAU
+      // 2. Targetnya match dengan kodeBarang saat ini
+      applicableOverrides = activeOverrides.filter((override) => {
+        // Jika tidak ada target, berarti berlaku untuk semua (global)
+        if (
+          !override.targetKodeBarang &&
+          (!override.targetKodeBarangs ||
+            override.targetKodeBarangs.length === 0)
+        ) {
+          return true;
+        }
+        // Jika ada targetKodeBarang spesifik
+        if (
+          override.targetKodeBarang &&
+          override.targetKodeBarang === kodeBarang
+        ) {
+          return true;
+        }
+        // Jika ada targetKodeBarangs (array)
+        if (
+          override.targetKodeBarangs &&
+          override.targetKodeBarangs.includes(kodeBarang)
+        ) {
+          return true;
+        }
+        return false;
+      });
+    }
+
+    if (applicableOverrides.length === 0) return bomFlat;
+
+    // Buat map untuk override berdasarkan originalItemId
     const overrideMap = new Map<string, BomOverride>();
-    activeOverrides.forEach((override) => {
-      overrideMap.set(normalizeItemId(override.originalItemId), override);
+    applicableOverrides.forEach((override) => {
+      const normalizedOriginalId = normalizeItemId(override.originalItemId);
+      overrideMap.set(normalizedOriginalId, override);
     });
 
-    // Ganti item yang di-override
-    return bomFlat.map((item) => {
+    console.log(
+      `Active BOM Overrides for ${kodeBarang || "ALL"}:`,
+      applicableOverrides.length,
+    );
+    console.log(
+      "Overrides:",
+      applicableOverrides.map((o) => ({
+        original: o.originalItemId,
+        replacement: o.replacementItemId,
+        target: o.targetKodeBarang || o.targetKodeBarangs || "ALL",
+      })),
+    );
+
+    // Hanya ganti item yang MATCH dengan originalItemId di override
+    let overrideCount = 0;
+    const result = bomFlat.map((item) => {
       const normalizedId = normalizeItemId(item.ItemID);
       const override = overrideMap.get(normalizedId);
 
       if (override) {
+        overrideCount++;
+        console.log(
+          `OVERRIDE for ${kodeBarang || "ALL"}: ${item.ItemID} -> ${override.replacementItemId}`,
+        );
         return {
           ...item,
           ItemID: override.replacementItemId,
           ItemName: override.replacementItemName,
           ItemName2: override.replacementItemName2,
-          _originalItemId: item.ItemID, // Simpan original untuk referensi
+          _originalItemId: item.ItemID,
           _isOverridden: true,
         };
       }
       return item;
     });
+
+    console.log(
+      `Total override applied for ${kodeBarang || "ALL"}: ${overrideCount}`,
+    );
+    return result;
   };
   // Load BOM overrides dari localStorage saat komponen mount
   useEffect(() => {
@@ -2285,6 +2863,7 @@ export default function ProductionPlanPage() {
       setLoading(false);
     }
   };
+  // Perbaiki fungsi refreshAllData
   const refreshAllData = useCallback(async () => {
     showToast("Memuat ulang data...", "loading");
     setLoading(true);
@@ -2295,7 +2874,7 @@ export default function ProductionPlanPage() {
         dateFilter.startDate,
         dateFilter.endDate,
         latestCommittedPOs,
-        showCommitted, // Tambahkan parameter showCommitted
+        showCommitted,
       );
       showToast("Data berhasil dimuat ulang", "success");
     } catch (error) {
@@ -2304,8 +2883,12 @@ export default function ProductionPlanPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFilter.startDate, dateFilter.endDate, showCommitted]); // Tambahkan showCommitted ke dependensi
-
+  }, [
+    dateFilter.startDate,
+    dateFilter.endDate,
+    showCommitted,
+    loadCommittedPOs,
+  ]); // Tambahkan loadCommittedPOs ke dependensi
   // ==================== FUNGSI LOAD BOM UNTUK COMMIT ====================
   const loadBomForCommit = async (
     plan: ProductionPlan,
@@ -2330,7 +2913,7 @@ export default function ProductionPlanPage() {
         const bomFlat = bomResponse.data.flat;
 
         // 🔥 TERAPKAN BOM OVERRIDE (GANTI ITEM TERTENTU)
-        const bomFlatWithOverrides = applyBomOverrides(bomFlat);
+        const bomFlatWithOverrides = applyBomOverrides(bomFlat, kb);
 
         // 🔥 BUILD TREE STRUCTURE DENGAN BOM YANG SUDAH DIOVERRIDE
         const treeStructure = buildTreeStructure(bomFlatWithOverrides);
@@ -2590,7 +3173,7 @@ export default function ProductionPlanPage() {
 
           // 🔥 TERAPKAN BOM OVERRIDE DI SINI
           const bomFlat = bomResponse.data.flat;
-          const bomFlatWithOverrides = applyBomOverrides(bomFlat);
+          const bomFlatWithOverrides = applyBomOverrides(bomFlat, kb);
           const treeStructure = buildTreeStructure(bomFlatWithOverrides);
 
           combinedBoms[kb] = {
@@ -2684,7 +3267,7 @@ export default function ProductionPlanPage() {
 
           // 🔥 TERAPKAN BOM OVERRIDE DI SINI
           const bomFlat = bomResponse.data.flat;
-          const bomFlatWithOverrides = applyBomOverrides(bomFlat);
+          const bomFlatWithOverrides = applyBomOverrides(bomFlat, kb);
           const treeStructure = buildTreeStructure(bomFlatWithOverrides);
 
           combinedBoms[kb] = {
@@ -3461,53 +4044,83 @@ export default function ProductionPlanPage() {
       ];
       XLSX.utils.book_append_sheet(wb, wsPO, "PO");
 
-      // ==================== SHEET 2: BOM (FINAL - DENGAN PARENT TRACKING) ====================
+      // ==================== SHEET 2: BOM (FINAL - DENGAN PARENT TRACKING & DUPLICATE HANDLING) ====================
       const bomData: any[] = [];
       let totalINJECTIONRemoved = 0;
 
-      // Build tree structure
-      const buildTree = (flatBom: BomItem[]): BomItem[] => {
+      // Build tree structure dengan mempertahankan semua node (termasuk duplicate kode di level berbeda)
+      const buildTreeWithDuplicates = (flatBom: BomItem[]): BomItem[] => {
         if (!flatBom || flatBom.length === 0) return [];
 
+        // Gunakan index sebagai key untuk membedakan node yang sama kodenya
         const nodeMap = new Map<string, BomItem>();
         const rootItems: BomItem[] = [];
 
-        for (const item of flatBom) {
-          const node: BomItem = { ...item, children: [] };
-          nodeMap.set(normalizeItemId(item.ItemID), node);
-        }
+        // Buat node dengan ID unik (gunakan kombinasi ItemID + Level + index)
+        flatBom.forEach((item, idx) => {
+          const uniqueKey = `${normalizeItemId(item.ItemID)}_L${item.Level}_${idx}`;
+          const node: BomItem = {
+            ...item,
+            children: [],
+          };
+          nodeMap.set(uniqueKey, node);
+        });
 
-        for (const item of flatBom) {
-          const node = nodeMap.get(normalizeItemId(item.ItemID));
-          if (!node) continue;
+        // Bangun parent-child relationship
+        flatBom.forEach((item, idx) => {
+          const uniqueKey = `${normalizeItemId(item.ItemID)}_L${item.Level}_${idx}`;
+          const node = nodeMap.get(uniqueKey);
+          if (!node) return;
 
           const level = Number(item.Level);
 
           if (level === 1) {
             rootItems.push(node);
           } else {
-            let parent: BomItem | undefined = undefined;
+            // Cari parent - bisa berdasarkan ParentItemID atau level
+            let parentFound = false;
 
+            // Cari parent berdasarkan ParentItemID
             if (item.ParentItemID) {
-              parent = nodeMap.get(normalizeItemId(item.ParentItemID));
-            }
-
-            if (!parent) {
-              parent = flatBom.find((p) => Number(p.Level) === level - 1);
-              if (parent) {
-                parent = nodeMap.get(normalizeItemId(parent.ItemID));
+              const parentNormalizedId = normalizeItemId(item.ParentItemID);
+              const parentKey = Array.from(nodeMap.keys()).find(
+                (key) =>
+                  key.startsWith(parentNormalizedId) &&
+                  key.includes(`_L${level - 1}_`),
+              );
+              if (parentKey) {
+                const parent = nodeMap.get(parentKey);
+                if (parent) {
+                  if (!parent.children) parent.children = [];
+                  parent.children.push(node);
+                  parentFound = true;
+                }
               }
             }
 
-            if (parent) {
-              if (!parent.children) parent.children = [];
-              parent.children.push(node);
-            } else {
+            // Jika tidak ditemukan, cari parent berdasarkan level
+            if (!parentFound) {
+              const parentItem = flatBom.find(
+                (p) => Number(p.Level) === level - 1,
+              );
+              if (parentItem) {
+                const parentKey = `${normalizeItemId(parentItem.ItemID)}_L${parentItem.Level}_${flatBom.indexOf(parentItem)}`;
+                const parent = nodeMap.get(parentKey);
+                if (parent) {
+                  if (!parent.children) parent.children = [];
+                  parent.children.push(node);
+                  parentFound = true;
+                }
+              }
+            }
+
+            if (!parentFound) {
               rootItems.push(node);
             }
           }
-        }
+        });
 
+        // Urutkan children
         const sortChildren = (nodes: BomItem[]) => {
           nodes.sort((a, b) => {
             if (Number(a.Level) !== Number(b.Level)) {
@@ -3526,10 +4139,65 @@ export default function ProductionPlanPage() {
         return rootItems;
       };
 
-      const formatIndentedName = (itemName: string, level: number): string => {
+      const formatIndentedName = (
+        itemName: string,
+        level: number,
+        isDuplicate: boolean = false,
+      ): string => {
+        if (!itemName) return "";
         if (level === 1) return `📦 ${itemName}`;
         const indent = "  ".repeat(level - 1);
-        return `${indent}└─ ${itemName}`;
+        const prefix = isDuplicate ? "↳ " : "└─ ";
+        return `${indent}${prefix}${itemName}`;
+      };
+
+      // Fungsi untuk menghitung accumulated qty
+      const calculateAccumulatedQtyForBOM = (
+        flatBom: BomItem[],
+      ): Map<string, number> => {
+        const cache = new Map<string, number>();
+        const itemMap = new Map<string, BomItem>();
+
+        for (const item of flatBom) {
+          const key = `${normalizeItemId(item.ItemID)}_L${item.Level}`;
+          itemMap.set(key, item);
+        }
+
+        for (const item of flatBom) {
+          const itemId = normalizeItemId(item.ItemID);
+          const level = Number(item.Level);
+          const key = `${itemId}_L${level}`;
+
+          if (level === 1) {
+            cache.set(key, item.Qty);
+          } else {
+            let parent: BomItem | undefined = undefined;
+
+            if (item.ParentItemID) {
+              const parentId = normalizeItemId(item.ParentItemID);
+              const parentKey = `${parentId}_L${level - 1}`;
+              parent = itemMap.get(parentKey);
+            }
+
+            if (!parent) {
+              parent = flatBom.find((p) => Number(p.Level) === level - 1);
+            }
+
+            if (parent) {
+              const parentId = normalizeItemId(parent.ItemID);
+              const parentKey = `${parentId}_L${level - 1}`;
+              const parentAccumulated = cache.get(parentKey);
+              if (parentAccumulated !== undefined) {
+                cache.set(key, item.Qty * parentAccumulated);
+              } else {
+                cache.set(key, item.Qty);
+              }
+            } else {
+              cache.set(key, item.Qty);
+            }
+          }
+        }
+        return cache;
       };
 
       for (const order of ordersWithBom) {
@@ -3538,6 +4206,7 @@ export default function ProductionPlanPage() {
           order.order.combinedItems && order.order.combinedItems.length > 1;
 
         const processBom = (bomFlat: BomItem[], poQty: number, poItem: any) => {
+          // Filter komponen (Level > 0) dan exclude INJECTION department
           const filteredBom = bomFlat.filter(
             (b) => Number(b.Level) > 0 && !isINJECTIONDepartment(b.Departemen),
           );
@@ -3548,45 +4217,10 @@ export default function ProductionPlanPage() {
 
           if (filteredBom.length === 0) return;
 
-          const calculateAccumulatedQty = (
-            flatBom: BomItem[],
-          ): Map<string, number> => {
-            const cache = new Map<string, number>();
-            const itemMap = new Map<string, BomItem>();
-            for (const item of flatBom) {
-              itemMap.set(normalizeItemId(item.ItemID), item);
-            }
-            for (const item of flatBom) {
-              const itemId = normalizeItemId(item.ItemID);
-              const level = Number(item.Level);
-              if (level === 1) {
-                cache.set(itemId, item.Qty);
-              } else {
-                let parent: BomItem | undefined = undefined;
-                if (item.ParentItemID) {
-                  parent = itemMap.get(normalizeItemId(item.ParentItemID));
-                }
-                if (!parent) {
-                  parent = flatBom.find((p) => Number(p.Level) === level - 1);
-                }
-                if (parent) {
-                  const parentId = normalizeItemId(parent.ItemID);
-                  const parentAccumulated = cache.get(parentId);
-                  if (parentAccumulated !== undefined) {
-                    cache.set(itemId, item.Qty * parentAccumulated);
-                  } else {
-                    cache.set(itemId, item.Qty);
-                  }
-                } else {
-                  cache.set(itemId, item.Qty);
-                }
-              }
-            }
-            return cache;
-          };
+          // Hitung accumulated qty
+          const accumulatedMap = calculateAccumulatedQtyForBOM(filteredBom);
 
-          const accumulatedMap = calculateAccumulatedQty(bomFlat);
-
+          // HEADER untuk setiap PO
           bomData.push({
             "No SPK": order.order.No_SPK,
             "Kode Barang Jadi": poItem.Kode_Barang,
@@ -3604,7 +4238,11 @@ export default function ProductionPlanPage() {
             "Keterangan Perhitungan Accumulated": "",
           });
 
-          const treeStructure = buildTree(filteredBom);
+          // Build tree dengan mempertahankan semua node
+          const treeStructure = buildTreeWithDuplicates(filteredBom);
+
+          // Track item yang sudah ditampilkan untuk deteksi duplikat
+          const displayedItems = new Map<string, number>();
 
           const traverseTree = (nodes: BomItem[]) => {
             for (const node of nodes) {
@@ -3614,16 +4252,25 @@ export default function ProductionPlanPage() {
                 (s) => normalizeItemId(s.itemid) === nodeId,
               );
 
-              const accumulatedQty = accumulatedMap.get(nodeId) || node.Qty;
+              const accumulatedKey = `${nodeId}_L${nodeLevel}`;
+              const accumulatedQty =
+                accumulatedMap.get(accumulatedKey) || node.Qty;
               const totalNeeded = accumulatedQty * poQty;
               const stock = stockItem?.stockAkhir || 0;
               const shortage = totalNeeded > stock;
 
+              // Cek apakah ini duplikat (kode sama di level berbeda)
+              const prevLevel = displayedItems.get(nodeId);
+              const isDuplicate =
+                prevLevel !== undefined && prevLevel !== nodeLevel;
+              displayedItems.set(nodeId, nodeLevel);
+
               let calculationNote = "";
               if (nodeLevel === 1) {
-                calculationNote = `Qty per Unit × QTY PO = ${node.Qty} × ${poQty} = ${totalNeeded}`;
+                calculationNote = `Qty per Unit × QTY PO = ${node.Qty} × ${poQty} = ${totalNeeded.toLocaleString()}`;
               } else {
-                calculationNote = `Qty per Unit × Accumulated Parent × QTY PO = ${node.Qty} × ${accumulatedQty / node.Qty} × ${poQty} = ${totalNeeded}`;
+                const parentAccumulated = accumulatedQty / node.Qty;
+                calculationNote = `Qty per Unit × Accumulated Parent × QTY PO = ${node.Qty} × ${parentAccumulated} × ${poQty} = ${totalNeeded.toLocaleString()}`;
               }
 
               bomData.push({
@@ -3633,12 +4280,16 @@ export default function ProductionPlanPage() {
                 "QTY PO": "",
                 Level: node.Level,
                 "Kode Komponen": node.ItemID,
-                "Nama Komponen": formatIndentedName(node.ItemName, nodeLevel),
+                "Nama Komponen": formatIndentedName(
+                  node.ItemName || node.ItemID,
+                  nodeLevel,
+                  isDuplicate,
+                ),
                 "Nama Komponen China": node.ItemName2 || "",
                 "Qty per Unit (BOM)": node.Qty,
                 "Accumulated Qty": accumulatedQty,
-                "Total Kebutuhan": totalNeeded,
-                Stok: stock,
+                "Total Kebutuhan": totalNeeded.toLocaleString(),
+                Stok: stock.toLocaleString(),
                 Status: shortage ? "KURANG" : "CUKUP",
                 "Keterangan Perhitungan Accumulated": calculationNote,
               });
@@ -3650,7 +4301,7 @@ export default function ProductionPlanPage() {
           };
 
           traverseTree(treeStructure);
-          bomData.push({});
+          bomData.push({}); // Baris kosong sebagai separator antar BOM
         };
 
         if (isCombined && order.order.combinedItems) {
@@ -3671,41 +4322,67 @@ export default function ProductionPlanPage() {
         }
       }
 
+      // Tambahkan informasi di akhir sheet BOM
       bomData.push({});
       bomData.push({
         "No SPK": "INFORMASI",
-        "Nama Komponen": "📦 = Produk Level 1",
+        "Nama Komponen": "📦 = Produk Level 1 (Barang Jadi)",
       });
       bomData.push({
         "No SPK": "INFORMASI",
-        "Nama Komponen": "  └─ = Sub-komponen Level 2",
+        "Nama Komponen": "└─ = Sub-komponen Level 2",
       });
       bomData.push({
         "No SPK": "INFORMASI",
-        "Nama Komponen": "    └─ = Sub-komponen Level 3",
+        "Nama Komponen": "  └─ = Sub-komponen Level 3",
+      });
+      bomData.push({
+        "No SPK": "INFORMASI",
+        "Nama Komponen": "    └─ = Sub-komponen Level 4",
+      });
+      bomData.push({
+        "No SPK": "INFORMASI",
+        "Nama Komponen": "↳ = Duplikat item (kode sama tapi level berbeda)",
       });
       bomData.push({
         "No SPK": "INFORMASI",
         "Nama Komponen": `* Komponen dengan departemen INJECTION tidak ditampilkan (${totalINJECTIONRemoved} item dihapus)`,
       });
+      bomData.push({
+        "No SPK": "INFORMASI",
+        "Nama Komponen": `* Qty ditampilkan dalam format terformat (contoh: 1,000)`,
+      });
 
+      // Buat worksheet BOM
       const wsBOM = XLSX.utils.json_to_sheet(bomData);
       wsBOM["!cols"] = [
-        { wch: 12 },
-        { wch: 15 },
-        { wch: 30 },
-        { wch: 10 },
-        { wch: 8 },
-        { wch: 15 },
-        { wch: 50 },
-        { wch: 35 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 12 },
-        { wch: 10 },
-        { wch: 60 },
+        { wch: 15 }, // No SPK
+        { wch: 18 }, // Kode Barang Jadi
+        { wch: 35 }, // Nama Barang Jadi
+        { wch: 12 }, // QTY PO
+        { wch: 10 }, // Level
+        { wch: 18 }, // Kode Komponen
+        { wch: 55 }, // Nama Komponen (lebih lebar untuk indentasi)
+        { wch: 35 }, // Nama Komponen China
+        { wch: 18 }, // Qty per Unit (BOM)
+        { wch: 18 }, // Accumulated Qty
+        { wch: 18 }, // Total Kebutuhan
+        { wch: 15 }, // Stok
+        { wch: 12 }, // Status
+        { wch: 60 }, // Keterangan Perhitungan Accumulated
       ];
+
+      // Styling untuk header (opsional - membuat baris header lebih menonjol)
+      const range = XLSX.utils.decode_range(wsBOM["!ref"] || "A1:N1");
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const address = XLSX.utils.encode_cell({ r: 0, c: C });
+        if (!wsBOM[address]) continue;
+        wsBOM[address].s = {
+          font: { bold: true },
+          fill: { fgColor: { rgb: "D3D3D3" } },
+        };
+      }
+
       XLSX.utils.book_append_sheet(wb, wsBOM, "BOM");
 
       // ==================== SHEET PER DEPARTEMEN ====================
@@ -5720,29 +6397,10 @@ export default function ProductionPlanPage() {
           {bomOverrideDialog.open && (
             <BomOverrideManager
               overrides={bomOverrides}
-              onAdd={(override) => {
-                setBomOverrides((prev) => [...prev, override]);
-                // Refresh data setelah BOM berubah
-                refreshAllData();
-              }}
-              onUpdate={(index, override) => {
-                setBomOverrides((prev) =>
-                  prev.map((o, i) => (i === index ? override : o)),
-                );
-                refreshAllData();
-              }}
-              onDelete={(index) => {
-                setBomOverrides((prev) => prev.filter((_, i) => i !== index));
-                refreshAllData();
-              }}
-              onToggle={(index) => {
-                setBomOverrides((prev) =>
-                  prev.map((o, i) =>
-                    i === index ? { ...o, isActive: !o.isActive } : o,
-                  ),
-                );
-                refreshAllData();
-              }}
+              onAdd={addBomOverride}
+              onUpdate={updateBomOverride}
+              onDelete={deleteBomOverride}
+              onToggle={toggleBomOverride}
               onClose={() =>
                 setBomOverrideDialog({
                   open: false,
@@ -5751,6 +6409,7 @@ export default function ProductionPlanPage() {
                   currentReplacement: "",
                 })
               }
+              loading={loadingOverrides}
             />
           )}
         </div>
