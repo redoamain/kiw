@@ -52,7 +52,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { Progress }from "@/components/ui/progress"
+import { Progress } from "@/components/ui/progress";
 import {
   AlertCircle,
   CheckCircle2,
@@ -70,11 +70,13 @@ import {
   Info,
   TreePine,
   Table as TableIcon,
-  ChevronUp, ChevronDown, ChevronsUpDown,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
   Database,
   Trash2,
   ChevronRight,
-  ChevronLeft
+  ChevronLeft,
 } from "lucide-react";
 // Import itemsWithVariants di bagian atas file
 import {
@@ -111,8 +113,8 @@ interface BomItem {
 interface StockItem {
   itemid: string;
   itemname: string;
-  stockAkhir: number;      // Untuk SaldoAkhir
-  physicalStock: number;   // Untuk SaldoAkhirFisik (Stok Wincp)
+  stockAkhir: number; // Untuk SaldoAkhir
+  physicalStock: number; // Untuk SaldoAkhirFisik (Stok Wincp)
   committedQty?: number;
   reservedQty?: number;
 }
@@ -136,6 +138,13 @@ interface ProductionPlan {
   CommitID?: number;
   stockLastUpdated?: string;
   error?: string;
+  // TAMBAHKAN FIELD INI
+  materialSummary?: {
+    totalNeeded: number;
+    totalShortage: number;
+    status: "CUKUP" | "KURANG" | "BELUM_DIHITUNG";
+    itemCount: number;
+  };
 }
 
 interface CommittedPO {
@@ -161,9 +170,15 @@ interface StockReservation {
   status: string;
   expiryDate: string;
   noSPK: string;
-  namaPO?:string;
+  namaPO?: string;
 }
-
+interface BomOverride {
+  originalItemId: string;
+  replacementItemId: string;
+  replacementItemName: string;
+  replacementItemName2: string;
+  isActive: boolean;
+}
 // ==================== FUNGSI BANTU ====================
 const normalizeItemId = (id: string): string => {
   if (!id) return "";
@@ -359,11 +374,14 @@ const fetchStockForItem = async (
       const itemData = dataArray[0];
 
       // 🔥 AMBIL KEDUA NILAI STOK
-      let saldoAkhir = 0;      // Untuk kolom "Stok Akhir"
+      let saldoAkhir = 0; // Untuk kolom "Stok Akhir"
       let saldoAkhirFisik = 0; // Untuk kolom "Stok Wincp"
 
       // Ambil SaldoAkhir
-      if (typeof itemData.SaldoAkhir === "number" && itemData.SaldoAkhir !== undefined) {
+      if (
+        typeof itemData.SaldoAkhir === "number" &&
+        itemData.SaldoAkhir !== undefined
+      ) {
         saldoAkhir = Math.max(0, itemData.SaldoAkhir);
       } else if (typeof itemData.stockAkhir === "number") {
         saldoAkhir = Math.max(0, itemData.stockAkhir);
@@ -378,7 +396,9 @@ const fetchStockForItem = async (
         saldoAkhirFisik = Math.max(0, itemData.totalkgs);
       }
 
-      console.log(`Stock untuk ${itemId}: SaldoAkhir=${saldoAkhir}, SaldoAkhirFisik=${saldoAkhirFisik}`);
+      console.log(
+        `Stock untuk ${itemId}: SaldoAkhir=${saldoAkhir}, SaldoAkhirFisik=${saldoAkhirFisik}`,
+      );
 
       return {
         itemid: normalizeItemId(
@@ -389,7 +409,7 @@ const fetchStockForItem = async (
           itemData.itemname ||
           itemData.ItemName ||
           itemId,
-        stockAkhir: saldoAkhir,        // Untuk kolom "Stok Akhir"
+        stockAkhir: saldoAkhir, // Untuk kolom "Stok Akhir"
         physicalStock: saldoAkhirFisik, // Untuk kolom "Stok Wincp"
         committedQty: itemData.TotalCommitted || 0,
         reservedQty: itemData.TotalReserved || 0,
@@ -715,7 +735,7 @@ const CommittedPOsPanel: React.FC<{
                   <TableHead>Commit ID</TableHead>
                   <TableHead>No SPK</TableHead>
                   <TableHead>PO</TableHead>
-              
+
                   <TableHead>Tanggal</TableHead>
                   <TableHead className="text-center">Status</TableHead>
                   <TableHead className="text-right">Materials</TableHead>
@@ -731,9 +751,8 @@ const CommittedPOsPanel: React.FC<{
                     <TableCell className="font-medium">{po.noSPK}</TableCell>
                     <TableCell>
                       <div className="font-medium">{po.namaPO}</div>
-                      
                     </TableCell>
-                    
+
                     <TableCell>
                       {new Date(po.tanggalCommit).toLocaleDateString("id-ID")}
                     </TableCell>
@@ -933,7 +952,7 @@ const HistoryPanel: React.FC<{
   const [detailSheetOpen, setDetailSheetOpen] = useState(false);
   const [searchHistory, setSearchHistory] = useState("");
   const [dateFilter, setDateFilter] = useState("");
-  
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -945,16 +964,16 @@ const HistoryPanel: React.FC<{
       setIsMobile(window.innerWidth < 768);
     };
     checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
   // Filter history berdasarkan search
   const filteredCalculations = useMemo(() => {
     if (!calculations.length) return [];
-    
+
     let filtered = [...calculations];
-    
+
     if (searchHistory) {
       const term = searchHistory.toLowerCase();
       filtered = filtered.filter(
@@ -962,16 +981,16 @@ const HistoryPanel: React.FC<{
           calc.calculation_id?.toLowerCase().includes(term) ||
           calc.user_id?.toLowerCase().includes(term) ||
           calc.notes?.toLowerCase().includes(term) ||
-          calc.calculation_name?.toLowerCase().includes(term)
+          calc.calculation_name?.toLowerCase().includes(term),
       );
     }
-    
+
     if (dateFilter) {
       filtered = filtered.filter(
-        (calc) => calc.calculation_date?.split("T")[0] === dateFilter
+        (calc) => calc.calculation_date?.split("T")[0] === dateFilter,
       );
     }
-    
+
     return filtered;
   }, [calculations, searchHistory, dateFilter]);
 
@@ -980,7 +999,10 @@ const HistoryPanel: React.FC<{
   const totalPages = Math.ceil(totalItems / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
   const endIndex = startIndex + pageSize;
-  const paginatedCalculations = filteredCalculations.slice(startIndex, endIndex);
+  const paginatedCalculations = filteredCalculations.slice(
+    startIndex,
+    endIndex,
+  );
 
   // Reset to first page when filters change
   useEffect(() => {
@@ -988,7 +1010,8 @@ const HistoryPanel: React.FC<{
   }, [searchHistory, dateFilter]);
 
   const getStatusSummary = (calc: any) => {
-    const total = calc.material_aman + calc.material_kurang + calc.material_habis;
+    const total =
+      calc.material_aman + calc.material_kurang + calc.material_habis;
     const amanPercent = total > 0 ? (calc.material_aman / total) * 100 : 0;
     return { total, amanPercent };
   };
@@ -997,9 +1020,9 @@ const HistoryPanel: React.FC<{
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
     // Scroll to top of table when page changes
-    const tableElement = document.getElementById('history-table');
+    const tableElement = document.getElementById("history-table");
     if (tableElement) {
-      tableElement.scrollIntoView({ behavior: 'smooth' });
+      tableElement.scrollIntoView({ behavior: "smooth" });
     }
   };
 
@@ -1015,15 +1038,15 @@ const HistoryPanel: React.FC<{
     const maxVisible = isMobile ? 3 : 5;
     let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
     let endPage = Math.min(totalPages, startPage + maxVisible - 1);
-    
+
     if (endPage - startPage + 1 < maxVisible) {
       startPage = Math.max(1, endPage - maxVisible + 1);
     }
-    
+
     for (let i = startPage; i <= endPage; i++) {
       pageNumbers.push(i);
     }
-    
+
     return pageNumbers;
   };
 
@@ -1032,14 +1055,21 @@ const HistoryPanel: React.FC<{
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
-            <CardTitle className="flex items-center gap-2 cursor-pointer" onClick={() => setExpanded(true)}>
+            <CardTitle
+              className="flex items-center gap-2 cursor-pointer"
+              onClick={() => setExpanded(true)}
+            >
               <Database className="h-5 w-5" />
               History Perhitungan Material Tersimpan
               <Badge variant="secondary" className="ml-2">
                 {calculations.length} Data
               </Badge>
             </CardTitle>
-            <Button variant="outline" size="sm" onClick={() => setExpanded(true)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setExpanded(true)}
+            >
               <Eye className="h-4 w-4 mr-2" />
               Tampilkan History
             </Button>
@@ -1066,7 +1096,11 @@ const HistoryPanel: React.FC<{
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setExpanded(false)}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setExpanded(false)}
+              >
                 Sembunyikan
               </Button>
             </div>
@@ -1134,7 +1168,9 @@ const HistoryPanel: React.FC<{
             <div className="text-center py-8 text-muted-foreground">
               <Database className="h-12 w-12 mx-auto mb-2 opacity-50" />
               <p>Belum ada data perhitungan yang tersimpan</p>
-              <p className="text-sm">Silahkan preview PO dan klik Simpan ke Database</p>
+              <p className="text-sm">
+                Silahkan preview PO dan klik Simpan ke Database
+              </p>
             </div>
           ) : (
             <>
@@ -1147,7 +1183,9 @@ const HistoryPanel: React.FC<{
                       <TableHead>Tanggal</TableHead>
                       <TableHead>User</TableHead>
                       <TableHead className="text-center">Total PO</TableHead>
-                      <TableHead className="text-center">Total Material</TableHead>
+                      <TableHead className="text-center">
+                        Total Material
+                      </TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Kebutuhan</TableHead>
                       <TableHead className="text-right">Kekurangan</TableHead>
@@ -1170,7 +1208,9 @@ const HistoryPanel: React.FC<{
                             </div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap">
-                            {new Date(calc.calculation_date).toLocaleString("id-ID")}
+                            {new Date(calc.calculation_date).toLocaleString(
+                              "id-ID",
+                            )}
                           </TableCell>
                           <TableCell>{calc.user_id}</TableCell>
                           <TableCell className="text-center font-bold">
@@ -1233,7 +1273,11 @@ const HistoryPanel: React.FC<{
                                   variant="destructive"
                                   size="sm"
                                   onClick={() => {
-                                    if (confirm(`Hapus perhitungan "${calc.calculation_name || calc.calculation_id}"?`)) {
+                                    if (
+                                      confirm(
+                                        `Hapus perhitungan "${calc.calculation_name || calc.calculation_id}"?`,
+                                      )
+                                    ) {
                                       onDeleteCalculation(calc.calculation_id);
                                     }
                                   }}
@@ -1260,7 +1304,9 @@ const HistoryPanel: React.FC<{
                     disabled={currentPage === 1}
                   >
                     <ChevronLeft className="h-4 w-4 mr-1" />
-                    <span className={isMobile ? "hidden" : "inline"}>First</span>
+                    <span className={isMobile ? "hidden" : "inline"}>
+                      First
+                    </span>
                   </Button>
                   <Button
                     variant="outline"
@@ -1269,9 +1315,11 @@ const HistoryPanel: React.FC<{
                     disabled={currentPage === 1}
                   >
                     <ChevronLeft className="h-4 w-4" />
-                    <span className={isMobile ? "hidden" : "ml-1"}>Previous</span>
+                    <span className={isMobile ? "hidden" : "ml-1"}>
+                      Previous
+                    </span>
                   </Button>
-                  
+
                   <div className="flex gap-1">
                     {currentPage > 2 && totalPages > 5 && (
                       <>
@@ -1282,14 +1330,18 @@ const HistoryPanel: React.FC<{
                         >
                           1
                         </Button>
-                        {currentPage > 3 && <span className="px-2 self-center">...</span>}
+                        {currentPage > 3 && (
+                          <span className="px-2 self-center">...</span>
+                        )}
                       </>
                     )}
-                    
+
                     {getPageNumbers().map((pageNum) => (
                       <Button
                         key={pageNum}
-                        variant={currentPage === pageNum ? "default" : "outline"}
+                        variant={
+                          currentPage === pageNum ? "default" : "outline"
+                        }
                         size="sm"
                         onClick={() => handlePageChange(pageNum)}
                         className={currentPage === pageNum ? "bg-blue-600" : ""}
@@ -1297,10 +1349,12 @@ const HistoryPanel: React.FC<{
                         {pageNum}
                       </Button>
                     ))}
-                    
+
                     {currentPage < totalPages - 1 && totalPages > 5 && (
                       <>
-                        {currentPage < totalPages - 2 && <span className="px-2 self-center">...</span>}
+                        {currentPage < totalPages - 2 && (
+                          <span className="px-2 self-center">...</span>
+                        )}
                         <Button
                           variant="outline"
                           size="sm"
@@ -1311,7 +1365,7 @@ const HistoryPanel: React.FC<{
                       </>
                     )}
                   </div>
-                  
+
                   <Button
                     variant="outline"
                     size="sm"
@@ -1360,7 +1414,9 @@ const HistoryPanel: React.FC<{
 
               {/* Info text about visible data */}
               <div className="text-center text-xs text-muted-foreground mt-4">
-                Menampilkan data {startIndex + 1} - {Math.min(endIndex, totalItems)} dari {totalItems} total perhitungan
+                Menampilkan data {startIndex + 1} -{" "}
+                {Math.min(endIndex, totalItems)} dari {totalItems} total
+                perhitungan
               </div>
             </>
           )}
@@ -1374,33 +1430,53 @@ const HistoryPanel: React.FC<{
             <SheetHeader className="text-left">
               <SheetTitle className="flex items-center gap-2">
                 <Database className="h-5 w-5" />
-                Detail Perhitungan: {selectedCalc?.calculation_name || selectedCalc?.calculation_id}
+                Detail Perhitungan:{" "}
+                {selectedCalc?.calculation_name || selectedCalc?.calculation_id}
               </SheetTitle>
               <SheetDescription>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
                   <div>
                     <div className="text-xs text-muted-foreground">Tanggal</div>
-                    <div className="font-medium">{selectedCalc?.calculation_date && new Date(selectedCalc.calculation_date).toLocaleString("id-ID")}</div>
+                    <div className="font-medium">
+                      {selectedCalc?.calculation_date &&
+                        new Date(selectedCalc.calculation_date).toLocaleString(
+                          "id-ID",
+                        )}
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs text-muted-foreground">User</div>
                     <div className="font-medium">{selectedCalc?.user_id}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-muted-foreground">Total PO</div>
+                    <div className="text-xs text-muted-foreground">
+                      Total PO
+                    </div>
                     <div className="font-medium">{selectedCalc?.total_po}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-muted-foreground">Total Material</div>
-                    <div className="font-medium">{selectedCalc?.total_materials}</div>
+                    <div className="text-xs text-muted-foreground">
+                      Total Material
+                    </div>
+                    <div className="font-medium">
+                      {selectedCalc?.total_materials}
+                    </div>
                   </div>
                   <div>
-                    <div className="text-xs text-muted-foreground">Total Kebutuhan</div>
-                    <div className="font-medium">{selectedCalc?.total_kebutuhan?.toLocaleString()}</div>
+                    <div className="text-xs text-muted-foreground">
+                      Total Kebutuhan
+                    </div>
+                    <div className="font-medium">
+                      {selectedCalc?.total_kebutuhan?.toLocaleString()}
+                    </div>
                   </div>
                   <div>
-                    <div className="text-xs text-muted-foreground text-red-600">Total Kekurangan</div>
-                    <div className="font-medium text-red-600">{selectedCalc?.total_kekurangan?.toLocaleString()}</div>
+                    <div className="text-xs text-muted-foreground text-red-600">
+                      Total Kekurangan
+                    </div>
+                    <div className="font-medium text-red-600">
+                      {selectedCalc?.total_kekurangan?.toLocaleString()}
+                    </div>
                   </div>
                 </div>
               </SheetDescription>
@@ -1410,7 +1486,10 @@ const HistoryPanel: React.FC<{
           {/* Table Material Data with pagination in sheet */}
           <div className="flex-1 overflow-auto px-6 py-4 min-h-0">
             <div className="border rounded-md h-full">
-              <div className="overflow-auto" style={{ maxHeight: "calc(90vh - 280px)" }}>
+              <div
+                className="overflow-auto"
+                style={{ maxHeight: "calc(90vh - 280px)" }}
+              >
                 <Table>
                   <TableHeader className="sticky top-0 bg-gray-50 z-10">
                     <TableRow>
@@ -1426,26 +1505,51 @@ const HistoryPanel: React.FC<{
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {selectedCalc?.material_data?.slice(0, 100).map((item: any, idx: number) => (
-                      <TableRow key={idx}>
-                        <TableCell className="font-mono text-xs">{item["Kode Material"]}</TableCell>
-                        <TableCell className="text-sm">{item["Nama Material"]}</TableCell>
-                        <TableCell>{item["Departemen"]}</TableCell>
-                        <TableCell className="text-right">{item["Total Kebutuhan"]}</TableCell>
-                        <TableCell className="text-right">{item["Stok Wincp (Real)"]}</TableCell>
-                        <TableCell className="text-right">{item["Qty Reserved (PO Lain)"]}</TableCell>
-                        <TableCell className="text-right">{item["Total Dibutuhkan"]}</TableCell>
-                        <TableCell className="text-right">{item["Qty Available"]}</TableCell>
-                        <TableCell className={item["Status Stock"] === "AMAN" ? "text-green-600 font-bold" : item["Status Stock"] === "KURANG" ? "text-orange-600 font-bold" : "text-red-600 font-bold"}>
-                          {item["Status Stock"]}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {selectedCalc?.material_data
+                      ?.slice(0, 100)
+                      .map((item: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell className="font-mono text-xs">
+                            {item["Kode Material"]}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {item["Nama Material"]}
+                          </TableCell>
+                          <TableCell>{item["Departemen"]}</TableCell>
+                          <TableCell className="text-right">
+                            {item["Total Kebutuhan"]}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {item["Stok Wincp (Real)"]}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {item["Qty Reserved (PO Lain)"]}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {item["Total Dibutuhkan"]}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {item["Qty Available"]}
+                          </TableCell>
+                          <TableCell
+                            className={
+                              item["Status Stock"] === "AMAN"
+                                ? "text-green-600 font-bold"
+                                : item["Status Stock"] === "KURANG"
+                                  ? "text-orange-600 font-bold"
+                                  : "text-red-600 font-bold"
+                            }
+                          >
+                            {item["Status Stock"]}
+                          </TableCell>
+                        </TableRow>
+                      ))}
                   </TableBody>
                 </Table>
                 {selectedCalc?.material_data?.length > 100 && (
                   <div className="text-center text-muted-foreground text-sm py-4">
-                    Menampilkan 100 dari {selectedCalc?.material_data?.length} material
+                    Menampilkan 100 dari {selectedCalc?.material_data?.length}{" "}
+                    material
                   </div>
                 )}
               </div>
@@ -1455,13 +1559,18 @@ const HistoryPanel: React.FC<{
           {/* Footer */}
           <div className="flex-shrink-0 border-t px-6 py-4 bg-white">
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setDetailSheetOpen(false)}>
+              <Button
+                variant="outline"
+                onClick={() => setDetailSheetOpen(false)}
+              >
                 Tutup
               </Button>
-              <Button onClick={() => {
-                onLoadCalculation(selectedCalc);
-                setDetailSheetOpen(false);
-              }}>
+              <Button
+                onClick={() => {
+                  onLoadCalculation(selectedCalc);
+                  setDetailSheetOpen(false);
+                }}
+              >
                 <Download className="h-4 w-4 mr-2" />
                 Load Perhitungan Ini
               </Button>
@@ -1470,6 +1579,367 @@ const HistoryPanel: React.FC<{
         </SheetContent>
       </Sheet>
     </>
+  );
+};
+
+const BomOverrideManager: React.FC<{
+  overrides: BomOverride[];
+  onAdd: (override: BomOverride) => void;
+  onUpdate: (index: number, override: BomOverride) => void;
+  onDelete: (index: number) => void;
+  onToggle: (index: number) => void;
+  onClose: () => void;
+}> = ({ overrides, onAdd, onUpdate, onDelete, onToggle, onClose }) => {
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newOverride, setNewOverride] = useState<Partial<BomOverride>>({
+    originalItemId: "",
+    replacementItemId: "",
+    replacementItemName: "",
+    replacementItemName2: "",
+    isActive: true,
+  });
+  const [searchOriginal, setSearchOriginal] = useState("");
+  const [searchReplacement, setSearchReplacement] = useState("");
+  const [searchResults, setSearchResults] = useState<
+    Array<{ itemid: string; itemname: string }>
+  >([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedField, setSelectedField] = useState<
+    "original" | "replacement"
+  >("original");
+
+  const searchItems = async (
+    query: string,
+    field: "original" | "replacement",
+  ) => {
+    if (!query || query.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(
+        `/api/stock/ppic?itemid=${encodeURIComponent(query)}`,
+      );
+      const result = await response.json();
+      let items: Array<{ itemid: string; itemname: string }> = [];
+
+      if (Array.isArray(result)) {
+        items = result.map((r: any) => ({
+          itemid: r.KodeBarang || r.itemid || r.ItemID,
+          itemname: r.NamaBarang || r.itemname || r.ItemName,
+        }));
+      } else if (result.data && Array.isArray(result.data)) {
+        items = result.data.map((r: any) => ({
+          itemid: r.KodeBarang || r.itemid || r.ItemID,
+          itemname: r.NamaBarang || r.itemname || r.ItemName,
+        }));
+      }
+
+      setSearchResults(items.filter((i) => i.itemid && i.itemid !== ""));
+    } catch (error) {
+      console.error("Error searching items:", error);
+      setSearchResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSelectItem = (item: { itemid: string; itemname: string }) => {
+    if (selectedField === "original") {
+      setNewOverride((prev) => ({
+        ...prev,
+        originalItemId: item.itemid,
+        replacementItemName: "",
+        replacementItemName2: "",
+      }));
+      setSearchOriginal(item.itemid);
+    } else {
+      setNewOverride((prev) => ({
+        ...prev,
+        replacementItemId: item.itemid,
+        replacementItemName: item.itemname,
+        replacementItemName2: item.itemname,
+      }));
+      setSearchReplacement(item.itemid);
+    }
+    setSearchResults([]);
+  };
+
+  const handleAddOverride = () => {
+    if (!newOverride.originalItemId || !newOverride.replacementItemId) {
+      alert("Mohon isi item asli dan item pengganti");
+      return;
+    }
+
+    onAdd({
+      originalItemId: newOverride.originalItemId,
+      replacementItemId: newOverride.replacementItemId,
+      replacementItemName:
+        newOverride.replacementItemName || newOverride.replacementItemId,
+      replacementItemName2:
+        newOverride.replacementItemName2 || newOverride.replacementItemId,
+      isActive: true,
+    });
+
+    setNewOverride({
+      originalItemId: "",
+      replacementItemId: "",
+      replacementItemName: "",
+      replacementItemName2: "",
+      isActive: true,
+    });
+    setShowAddForm(false);
+    setSearchOriginal("");
+    setSearchReplacement("");
+  };
+
+  return (
+    <Sheet open={true} onOpenChange={onClose}>
+      <SheetContent className="sm:max-w-lg overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
+            <TreePine className="h-5 w-5" />
+            Pengaturan Perubahan BOM
+          </SheetTitle>
+          <SheetDescription>
+            Ganti material tertentu dengan material lain untuk kebutuhan
+            produksi khusus. Perubahan ini akan berlaku untuk semua perhitungan
+            dan export.
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="space-y-4 py-4">
+          {/* Daftar Override Aktif */}
+          <div>
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="font-semibold">Daftar Perubahan BOM</h3>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddForm(!showAddForm)}
+              >
+                + Tambah Perubahan
+              </Button>
+            </div>
+
+            {overrides.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground border rounded-lg">
+                <TreePine className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                <p>Belum ada perubahan BOM</p>
+                <p className="text-sm">Klik tombol di atas untuk menambahkan</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {overrides.map((override, idx) => (
+                  <Card
+                    key={idx}
+                    className={!override.isActive ? "opacity-60" : ""}
+                  >
+                    <CardContent className="pt-4">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Badge
+                              variant={
+                                override.isActive ? "default" : "secondary"
+                              }
+                            >
+                              {override.isActive ? "AKTIF" : "NONAKTIF"}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              #{idx + 1}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-sm">
+                            <div>
+                              <span className="text-muted-foreground">
+                                Item Asli:
+                              </span>
+                              <div className="font-mono text-xs">
+                                {override.originalItemId}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">
+                                Item Pengganti:
+                              </span>
+                              <div className="font-mono text-xs">
+                                {override.replacementItemId}
+                              </div>
+                              <div className="text-xs truncate">
+                                {override.replacementItemName}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onToggle(idx)}
+                          >
+                            {override.isActive ? (
+                              <Lock className="h-3 w-3" />
+                            ) : (
+                              <Unlock className="h-3 w-3" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  `Hapus perubahan BOM untuk ${override.originalItemId}?`,
+                                )
+                              ) {
+                                onDelete(idx);
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Form Tambah Override */}
+          {showAddForm && (
+            <div className="border rounded-lg p-4 space-y-3">
+              <h3 className="font-semibold text-sm">
+                Tambah Perubahan BOM Baru
+              </h3>
+
+              {/* Item Asli */}
+              <div>
+                <Label>Item Asli (yang akan diganti)</Label>
+                <div className="relative">
+                  <Input
+                    placeholder="Cari item asli..."
+                    value={searchOriginal}
+                    onChange={(e) => {
+                      setSearchOriginal(e.target.value);
+                      setSelectedField("original");
+                      searchItems(e.target.value, "original");
+                    }}
+                  />
+                  {searchResults.length > 0 && selectedField === "original" && (
+                    <div className="absolute z-10 top-full left-0 right-0 bg-white border rounded-md shadow-lg mt-1 max-h-48 overflow-auto">
+                      {searchResults.map((item) => (
+                        <div
+                          key={item.itemid}
+                          className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm"
+                          onClick={() => handleSelectItem(item)}
+                        >
+                          <div className="font-mono text-xs">{item.itemid}</div>
+                          <div className="text-xs truncate">
+                            {item.itemname}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Item Pengganti */}
+              <div>
+                <Label>Item Pengganti</Label>
+                <div className="relative">
+                  <Input
+                    placeholder="Cari item pengganti..."
+                    value={searchReplacement}
+                    onChange={(e) => {
+                      setSearchReplacement(e.target.value);
+                      setSelectedField("replacement");
+                      searchItems(e.target.value, "replacement");
+                    }}
+                  />
+                  {searchResults.length > 0 &&
+                    selectedField === "replacement" && (
+                      <div className="absolute z-10 top-full left-0 right-0 bg-white border rounded-md shadow-lg mt-1 max-h-48 overflow-auto">
+                        {searchResults.map((item) => (
+                          <div
+                            key={item.itemid}
+                            className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm"
+                            onClick={() => handleSelectItem(item)}
+                          >
+                            <div className="font-mono text-xs">
+                              {item.itemid}
+                            </div>
+                            <div className="text-xs truncate">
+                              {item.itemname}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button size="sm" onClick={handleAddOverride}>
+                  Simpan Perubahan
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setShowAddForm(false);
+                    setNewOverride({
+                      originalItemId: "",
+                      replacementItemId: "",
+                      replacementItemName: "",
+                      replacementItemName2: "",
+                      isActive: true,
+                    });
+                    setSearchOriginal("");
+                    setSearchReplacement("");
+                  }}
+                >
+                  Batal
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Informasi */}
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertTitle>Informasi</AlertTitle>
+            <AlertDescription className="text-xs">
+              <ul className="list-disc list-inside space-y-1">
+                <li>
+                  Perubahan BOM berlaku untuk semua perhitungan material dan
+                  export
+                </li>
+                <li>
+                  Anda dapat mengaktifkan/nonaktifkan perubahan kapan saja
+                </li>
+                <li>
+                  Item asli akan diganti dengan item pengganti di semua level
+                  BOM
+                </li>
+                <li>
+                  Perubahan ini tidak mempengaruhi data master BOM yang asli
+                </li>
+              </ul>
+            </AlertDescription>
+          </Alert>
+        </div>
+
+        <SheetFooter>
+          <Button onClick={onClose}>Tutup</Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 };
 // ==================== KOMPONEN UTAMA ====================
@@ -1507,7 +1977,60 @@ export default function ProductionPlanPage() {
   const [savingToDatabase, setSavingToDatabase] = useState(false);
   const [savedCalculations, setSavedCalculations] = useState<any[]>([]);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [bomOverrides, setBomOverrides] = useState<BomOverride[]>([]);
+  const [bomOverrideDialog, setBomOverrideDialog] = useState({
+    open: false,
+    originalItemId: "",
+    originalItemName: "",
+    currentReplacement: "",
+  });
+  // Fungsi untuk menerapkan BOM override pada BOM
+  const applyBomOverrides = (bomFlat: BomItem[]): BomItem[] => {
+    if (!bomOverrides.length) return bomFlat;
 
+    const activeOverrides = bomOverrides.filter((o) => o.isActive);
+    if (!activeOverrides.length) return bomFlat;
+
+    // Buat map untuk override
+    const overrideMap = new Map<string, BomOverride>();
+    activeOverrides.forEach((override) => {
+      overrideMap.set(normalizeItemId(override.originalItemId), override);
+    });
+
+    // Ganti item yang di-override
+    return bomFlat.map((item) => {
+      const normalizedId = normalizeItemId(item.ItemID);
+      const override = overrideMap.get(normalizedId);
+
+      if (override) {
+        return {
+          ...item,
+          ItemID: override.replacementItemId,
+          ItemName: override.replacementItemName,
+          ItemName2: override.replacementItemName2,
+          _originalItemId: item.ItemID, // Simpan original untuk referensi
+          _isOverridden: true,
+        };
+      }
+      return item;
+    });
+  };
+  // Load BOM overrides dari localStorage saat komponen mount
+  useEffect(() => {
+    const savedOverrides = localStorage.getItem("bomOverrides");
+    if (savedOverrides) {
+      try {
+        setBomOverrides(JSON.parse(savedOverrides));
+      } catch (e) {
+        console.error("Error loading BOM overrides:", e);
+      }
+    }
+  }, []);
+
+  // Simpan BOM overrides ke localStorage setiap kali berubah
+  useEffect(() => {
+    localStorage.setItem("bomOverrides", JSON.stringify(bomOverrides));
+  }, [bomOverrides]);
   // Fungsi untuk menghapus perhitungan
   const deleteCalculation = async (calculationId: string) => {
     try {
@@ -1802,10 +2325,24 @@ export default function ProductionPlanPage() {
         const bomResponse = await axios.get(
           `/api/bom/ppic?itemid=${encodeURIComponent(kb)}`,
         );
-        const treeStructure = buildTreeStructure(bomResponse.data.flat);
-        combinedBoms[kb] = { flat: bomResponse.data.flat, tree: treeStructure };
+
+        // 🔥 AMBIL BOM FLAT ASLI
+        const bomFlat = bomResponse.data.flat;
+
+        // 🔥 TERAPKAN BOM OVERRIDE (GANTI ITEM TERTENTU)
+        const bomFlatWithOverrides = applyBomOverrides(bomFlat);
+
+        // 🔥 BUILD TREE STRUCTURE DENGAN BOM YANG SUDAH DIOVERRIDE
+        const treeStructure = buildTreeStructure(bomFlatWithOverrides);
+
+        // 🔥 SIMPAN KE combinedBoms
+        combinedBoms[kb] = {
+          flat: bomFlatWithOverrides,
+          tree: treeStructure,
+        };
+
         allItemIds.push(
-          ...bomResponse.data.flat.map((item: BomItem) =>
+          ...bomFlatWithOverrides.map((item: BomItem) =>
             normalizeItemId(item.ItemID),
           ),
         );
@@ -2033,160 +2570,156 @@ export default function ProductionPlanPage() {
   };
   // ==================== FUNGSI LOAD DATA COMMITTED PO ====================
   // Tambahkan fungsi ini SEBELUM loadBomAndStockForExport
-  const loadCommittedOrderData = async (
-    committedPO: ProductionPlan,
-  ): Promise<ProductionPlan> => {
-    try {
-      console.log(`Loading data for committed PO: ${committedPO.order.No_SPK}`);
+const loadCommittedOrderData = async (
+  committedPO: ProductionPlan,
+): Promise<ProductionPlan> => {
+  try {
+    console.log(`Loading data for committed PO: ${committedPO.order.No_SPK}`);
 
-      // Ambil data BOM untuk committed PO
-      const allKodeBarang = getAllKodeBarang(committedPO.order.Kode_Barang);
-      const combinedBoms: {
-        [kodeBarang: string]: { flat: BomItem[]; tree: BomItem[] };
-      } = {};
-      let allItemIds: string[] = [];
+    const allKodeBarang = getAllKodeBarang(committedPO.order.Kode_Barang);
+    const combinedBoms: {
+      [kodeBarang: string]: { flat: BomItem[]; tree: BomItem[] };
+    } = {};
+    let allItemIds: string[] = [];
 
-      for (const kb of allKodeBarang) {
-        try {
-          const bomResponse = await axios.get(
-            `/api/bom/ppic?itemid=${encodeURIComponent(kb)}`,
-          );
-          const treeStructure = buildTreeStructure(bomResponse.data.flat);
-          combinedBoms[kb] = {
-            flat: bomResponse.data.flat,
-            tree: treeStructure,
-          };
-          allItemIds.push(
-            ...bomResponse.data.flat.map((item: BomItem) =>
-              normalizeItemId(item.ItemID),
-            ),
-          );
-        } catch (err) {
-          console.error(`Gagal load BOM untuk ${kb}:`, err);
-        }
+    for (const kb of allKodeBarang) {
+      try {
+        const bomResponse = await axios.get(
+          `/api/bom/ppic?itemid=${encodeURIComponent(kb)}`,
+        );
+
+        // 🔥 TERAPKAN BOM OVERRIDE DI SINI
+        const bomFlat = bomResponse.data.flat;
+        const bomFlatWithOverrides = applyBomOverrides(bomFlat);
+        const treeStructure = buildTreeStructure(bomFlatWithOverrides);
+
+        combinedBoms[kb] = {
+          flat: bomFlatWithOverrides,
+          tree: treeStructure,
+        };
+        allItemIds.push(
+          ...bomFlatWithOverrides.map((item: BomItem) =>
+            normalizeItemId(item.ItemID),
+          ),
+        );
+      } catch (err) {
+        console.error(`Gagal load BOM untuk ${kb}:`, err);
       }
-
-      allItemIds = Array.from(new Set(allItemIds));
-      const stockData = await fetchStockForItemsWithCommitment(
-        allItemIds,
-        committedPO.order.Tanggal_Order,
-      );
-      const finalBom = combineBoms(combinedBoms);
-
-      return {
-        ...committedPO,
-        bom: finalBom,
-        stock: stockData,
-        stockLastUpdated: new Date().toISOString(),
-      };
-    } catch (error) {
-      console.error(
-        `Error loading data for committed PO ${committedPO.order.No_SPK}:`,
-        error,
-      );
-      return committedPO;
     }
-  };
+
+    allItemIds = Array.from(new Set(allItemIds));
+    const stockData = await fetchStockForItemsWithCommitment(
+      allItemIds,
+      committedPO.order.Tanggal_Order,
+    );
+    const finalBom = combineBoms(combinedBoms);
+
+    return {
+      ...committedPO,
+      bom: finalBom,
+      stock: stockData,
+      stockLastUpdated: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error(
+      `Error loading data for committed PO ${committedPO.order.No_SPK}:`,
+      error,
+    );
+    return committedPO;
+  }
+};
 
   // ==================== FUNGSI LOAD BOM & STOCK UNTUK EXPORT ====================
-  const loadBomAndStockForExport = async (
-    selectedOrders: ProductionPlan[],
-  ): Promise<ProductionPlan[]> => {
-    const updatedOrders = [...selectedOrders];
-    const totalOrders = updatedOrders.length;
+ const loadBomAndStockForExport = async (
+   selectedOrders: ProductionPlan[],
+ ): Promise<ProductionPlan[]> => {
+   const updatedOrders = [...selectedOrders];
+   const totalOrders = updatedOrders.length;
 
-    for (let i = 0; i < updatedOrders.length; i++) {
-      const order = updatedOrders[i];
+   for (let i = 0; i < updatedOrders.length; i++) {
+     const order = updatedOrders[i];
 
-      console.log(
-        `Processing order ${i + 1}/${totalOrders}: ${order.order.No_SPK}, committed: ${order.committed}`,
-      );
+     if (order.bom && order.stock) {
+       setExportProgress((prev) => ({
+         ...prev,
+         current: Math.floor(((i + 1) / totalOrders) * 50),
+         message: `Menggunakan BOM yang sudah ada untuk ${order.order.No_SPK} (${i + 1}/${totalOrders})...`,
+       }));
+       continue;
+     }
 
-      // Jika sudah punya BOM dan stock, skip
-      if (order.bom && order.stock) {
-        setExportProgress((prev) => ({
-          ...prev,
-          current: Math.floor(((i + 1) / totalOrders) * 50),
-          message: `Menggunakan BOM yang sudah ada untuk ${order.order.No_SPK} (${i + 1}/${totalOrders})...`,
-        }));
-        console.log(`Using existing BOM for ${order.order.No_SPK}`);
-        continue;
-      }
+     if (order.committed) {
+       setExportProgress({
+         visible: true,
+         current: Math.floor((i / totalOrders) * 50),
+         total: 100,
+         message: `Memuat data untuk committed PO ${order.order.No_SPK} (${i + 1}/${totalOrders})...`,
+       });
 
-      // 🔥 TAMBAHKAN: Jika PO sudah di-commit, coba load dari database terlebih dahulu
-      if (order.committed) {
-        setExportProgress({
-          visible: true,
-          current: Math.floor((i / totalOrders) * 50),
-          total: 100,
-          message: `Memuat data untuk committed PO ${order.order.No_SPK} (${i + 1}/${totalOrders})...`,
-        });
-        console.log(`Loading committed order data for ${order.order.No_SPK}`);
+       const loadedOrder = await loadCommittedOrderData(order);
+       updatedOrders[i] = loadedOrder;
+       continue;
+     }
 
-        const loadedOrder = await loadCommittedOrderData(order);
-        updatedOrders[i] = loadedOrder;
-        console.log(
-          `Loaded committed order data for ${order.order.No_SPK}, hasBom: ${!!loadedOrder.bom}`,
-        );
-        continue;
-      }
+     console.log(`Loading BOM for active PO ${order.order.No_SPK}`);
+     setExportProgress({
+       visible: true,
+       current: Math.floor((i / totalOrders) * 50),
+       total: 100,
+       message: `Memuat BOM dan stok untuk ${order.order.No_SPK} (${i + 1}/${totalOrders})...`,
+     });
 
-      // Untuk PO yang belum di-commit, load seperti biasa
-      console.log(`Loading BOM for active PO ${order.order.No_SPK}`);
-      setExportProgress({
-        visible: true,
-        current: Math.floor((i / totalOrders) * 50),
-        total: 100,
-        message: `Memuat BOM dan stok untuk ${order.order.No_SPK} (${i + 1}/${totalOrders})...`,
-      });
+     const allKodeBarang = getAllKodeBarang(order.order.Kode_Barang);
+     const combinedBoms: {
+       [kodeBarang: string]: { flat: BomItem[]; tree: BomItem[] };
+     } = {};
+     let allItemIds: string[] = [];
 
-      const allKodeBarang = getAllKodeBarang(order.order.Kode_Barang);
-      const combinedBoms: {
-        [kodeBarang: string]: { flat: BomItem[]; tree: BomItem[] };
-      } = {};
-      let allItemIds: string[] = [];
+     for (const kb of allKodeBarang) {
+       try {
+         const bomResponse = await axios.get(
+           `/api/bom/ppic?itemid=${encodeURIComponent(kb)}`,
+           { timeout: 30000 },
+         );
 
-      for (const kb of allKodeBarang) {
-        try {
-          const bomResponse = await axios.get(
-            `/api/bom/ppic?itemid=${encodeURIComponent(kb)}`,
-            { timeout: 30000 },
-          );
-          const treeStructure = buildTreeStructure(bomResponse.data.flat);
-          combinedBoms[kb] = {
-            flat: bomResponse.data.flat,
-            tree: treeStructure,
-          };
-          allItemIds.push(
-            ...bomResponse.data.flat.map((item: BomItem) =>
-              normalizeItemId(item.ItemID),
-            ),
-          );
-        } catch (err) {
-          console.error(`Gagal load BOM untuk ${kb}:`, err);
-        }
-      }
+         // 🔥 TERAPKAN BOM OVERRIDE DI SINI
+         const bomFlat = bomResponse.data.flat;
+         const bomFlatWithOverrides = applyBomOverrides(bomFlat);
+         const treeStructure = buildTreeStructure(bomFlatWithOverrides);
 
-      allItemIds = Array.from(new Set(allItemIds));
-      const stockData = await fetchStockForItemsWithCommitment(
-        allItemIds,
-        order.order.Tanggal_Order,
-      );
-      const finalBom = combineBoms(combinedBoms);
+         combinedBoms[kb] = {
+           flat: bomFlatWithOverrides,
+           tree: treeStructure,
+         };
+         allItemIds.push(
+           ...bomFlatWithOverrides.map((item: BomItem) =>
+             normalizeItemId(item.ItemID),
+           ),
+         );
+       } catch (err) {
+         console.error(`Gagal load BOM untuk ${kb}:`, err);
+       }
+     }
 
-      updatedOrders[i] = {
-        ...order,
-        bom: finalBom,
-        stock: stockData,
-        stockLastUpdated: new Date().toISOString(),
-      };
+     allItemIds = Array.from(new Set(allItemIds));
+     const stockData = await fetchStockForItemsWithCommitment(
+       allItemIds,
+       order.order.Tanggal_Order,
+     );
+     const finalBom = combineBoms(combinedBoms);
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+     updatedOrders[i] = {
+       ...order,
+       bom: finalBom,
+       stock: stockData,
+       stockLastUpdated: new Date().toISOString(),
+     };
 
-    console.log(`Finished loading BOM for ${updatedOrders.length} orders`);
-    return updatedOrders;
-  };
+     await new Promise((resolve) => setTimeout(resolve, 50));
+   }
+
+   return updatedOrders;
+ };
 
   // ==================== FUNGSI EXPORT (LENGKAP DENGAN PERBAIKAN) ====================
   // ==================== FUNGSI CALCULATE ACCUMULATED QTY (DIPERBAIKI) ====================
@@ -5069,6 +5602,59 @@ export default function ProductionPlanPage() {
             <Download className="h-4 w-4" />
             Export ({selectedCount} PO)
           </Button>
+          <Button
+            onClick={() =>
+              setBomOverrideDialog({
+                open: true,
+                originalItemId: "",
+                originalItemName: "",
+                currentReplacement: "",
+              })
+            }
+            variant="outline"
+            className="gap-2"
+          >
+            <TreePine className="h-4 w-4" />
+            Perubahan BOM ({bomOverrides.filter((o) => o.isActive).length})
+          </Button>
+
+          {/* Tambahkan dialog di akhir komponen (sebelum closing div) */}
+          {bomOverrideDialog.open && (
+            <BomOverrideManager
+              overrides={bomOverrides}
+              onAdd={(override) => {
+                setBomOverrides((prev) => [...prev, override]);
+                // Refresh data setelah BOM berubah
+                refreshAllData();
+              }}
+              onUpdate={(index, override) => {
+                setBomOverrides((prev) =>
+                  prev.map((o, i) => (i === index ? override : o)),
+                );
+                refreshAllData();
+              }}
+              onDelete={(index) => {
+                setBomOverrides((prev) => prev.filter((_, i) => i !== index));
+                refreshAllData();
+              }}
+              onToggle={(index) => {
+                setBomOverrides((prev) =>
+                  prev.map((o, i) =>
+                    i === index ? { ...o, isActive: !o.isActive } : o,
+                  ),
+                );
+                refreshAllData();
+              }}
+              onClose={() =>
+                setBomOverrideDialog({
+                  open: false,
+                  originalItemId: "",
+                  originalItemName: "",
+                  currentReplacement: "",
+                })
+              }
+            />
+          )}
         </div>
       </div>
 
@@ -5264,9 +5850,7 @@ export default function ProductionPlanPage() {
                     <TableHead className="w-25">Tanggal Order</TableHead>
                     <TableHead className="w-27.5">Nama PO</TableHead>
 
-                    <TableHead className="w-30 text-center">
-                      Aksi
-                    </TableHead>
+                    <TableHead className="w-30 text-center">Aksi</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -5358,50 +5942,62 @@ export default function ProductionPlanPage() {
                             </div>
                           )}
                         </TableCell>
-<TableCell className="w-30 align-top text-center">
-  {plan.committed ? (
-    <div className="flex gap-2 justify-center">
-      <Button
-        variant="secondary"
-        size="sm"
-        disabled
-        className="gap-1 whitespace-nowrap"
-      >
-        <Lock className="h-3 w-3" />
-        Committed
-      </Button>
-      <Button
-        variant="destructive"
-        size="sm"
-        onClick={() => uncommitPO(plan.order.No_SPK)}
-        disabled={isCommitting && committing === plan.order.No_SPK}
-        className="gap-1 whitespace-nowrap"
-      >
-        {isCommitting && committing === plan.order.No_SPK ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : (
-          <Unlock className="h-3 w-3" />
-        )}
-        {isCommitting && committing === plan.order.No_SPK ? "Uncommitting..." : "Uncommit"}
-      </Button>
-    </div>
-  ) : (
-    <Button
-      variant="default"
-      size="sm"
-      onClick={() => commitPO(idx)}
-      disabled={isCommitting && committing === plan.order.No_SPK}
-      className="gap-1 whitespace-nowrap"
-    >
-      {isCommitting && committing === plan.order.No_SPK ? (
-        <Loader2 className="h-3 w-3 animate-spin" />
-      ) : (
-        <Lock className="h-3 w-3" />
-      )}
-      {isCommitting && committing === plan.order.No_SPK ? "Committing..." : "Commit PO"}
-    </Button>
-  )}
-</TableCell>
+                        <TableCell className="w-30 align-top text-center">
+                          {plan.committed ? (
+                            <div className="flex gap-2 justify-center">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                disabled
+                                className="gap-1 whitespace-nowrap"
+                              >
+                                <Lock className="h-3 w-3" />
+                                Committed
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => uncommitPO(plan.order.No_SPK)}
+                                disabled={
+                                  isCommitting &&
+                                  committing === plan.order.No_SPK
+                                }
+                                className="gap-1 whitespace-nowrap"
+                              >
+                                {isCommitting &&
+                                committing === plan.order.No_SPK ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Unlock className="h-3 w-3" />
+                                )}
+                                {isCommitting &&
+                                committing === plan.order.No_SPK
+                                  ? "Uncommitting..."
+                                  : "Uncommit"}
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={() => commitPO(idx)}
+                              disabled={
+                                isCommitting && committing === plan.order.No_SPK
+                              }
+                              className="gap-1 whitespace-nowrap"
+                            >
+                              {isCommitting &&
+                              committing === plan.order.No_SPK ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Lock className="h-3 w-3" />
+                              )}
+                              {isCommitting && committing === plan.order.No_SPK
+                                ? "Committing..."
+                                : "Commit PO"}
+                            </Button>
+                          )}
+                        </TableCell>
                       </TableRow>
                     );
                   })}
