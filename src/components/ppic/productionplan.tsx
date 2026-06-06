@@ -2610,29 +2610,73 @@ export default function ProductionPlanPage() {
     localStorage.setItem("bomOverrides", JSON.stringify(bomOverrides));
   }, [bomOverrides]);
   // Fungsi untuk menghapus perhitungan
-  const deleteCalculation = async (calculationId: string) => {
-    try {
-      const response = await fetch(
-        `/api/ppic/save-material-requirements?calculation_id=${calculationId}`,
-        {
-          method: "DELETE",
+// Fungsi untuk menghapus perhitungan
+const deleteCalculation = async (calculationId: string) => {
+  if (!calculationId) {
+    showToast("ID perhitungan tidak valid", "error");
+    return;
+  }
+  
+  if (
+    !confirm(
+      `⚠️ PERINGATAN: Anda akan menghapus perhitungan "${calculationId}"\n\nData yang dihapus:\n- Header perhitungan\n- Daftar PO\n- Material requirements\n\nData TIDAK DAPAT DIKEMBALIKAN!\n\nApakah Anda yakin ingin menghapus?`,
+    )
+  ) {
+    return;
+  }
+
+  showToast(`Menghapus perhitungan ${calculationId}...`, "loading");
+  
+  try {
+    const response = await fetch(
+      `/api/ppic/save-material-requirements?calculation_id=${encodeURIComponent(calculationId)}`,
+      {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
-      const result = await response.json();
-      if (result.success) {
-        showToast(
-          `✅ Perhitungan ${calculationId} berhasil dihapus`,
-          "success",
-        );
-        await loadSavedCalculations();
-      } else {
-        throw new Error(result.error || "Failed to delete");
       }
-    } catch (error) {
-      console.error("Error deleting calculation:", error);
-      showToast(`❌ Gagal menghapus: ${error}`, "error");
+    );
+    
+    // Baca response sebagai text terlebih dahulu
+    const responseText = await response.text();
+    console.log("Delete response:", responseText);
+    
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch (e) {
+      console.error("Failed to parse JSON:", e);
+      // Jika response OK tapi tidak bisa parse JSON, anggap berhasil
+      if (response.ok) {
+        showToast(`✅ Perhitungan ${calculationId} berhasil dihapus`, "success");
+        await loadSavedCalculations();
+        return;
+      }
+      throw new Error("Invalid response from server");
     }
-  };
+    
+    if (result.success) {
+      showToast(`✅ Perhitungan ${calculationId} berhasil dihapus`, "success");
+      
+      // Refresh daftar perhitungan
+      await loadSavedCalculations();
+      
+      // Tutup detail sheet jika terbuka
+      // setDetailSheetOpen(false);
+      // setSelectedCalc(null);
+      
+    } else {
+      throw new Error(result.error || "Failed to delete");
+    }
+  } catch (error) {
+    console.error("Error deleting calculation:", error);
+    showToast(
+      `❌ Gagal menghapus: ${error instanceof Error ? error.message : "Unknown error"}`,
+      "error"
+    );
+  }
+};
 
   // Fungsi untuk memuat perhitungan yang tersimpan ke preview
   const loadCalculationToPreview = (calculation: any) => {
@@ -4224,7 +4268,7 @@ export default function ProductionPlanPage() {
           bomData.push({
             "No SPK": order.order.No_SPK,
             "Kode Barang Jadi": poItem.Kode_Barang,
-            "Nama Barang Jadi": poItem.Nama_PO,
+            "Nama PO": poItem.Nama_PO,
             "QTY PO": poQty,
             Level: "HEADER",
             "Kode Komponen": "",
@@ -4276,7 +4320,7 @@ export default function ProductionPlanPage() {
               bomData.push({
                 "No SPK": "",
                 "Kode Barang Jadi": "",
-                "Nama Barang Jadi": "",
+                "Nama PO": "",
                 "QTY PO": "",
                 Level: node.Level,
                 "Kode Komponen": node.ItemID,
@@ -4386,6 +4430,7 @@ export default function ProductionPlanPage() {
       XLSX.utils.book_append_sheet(wb, wsBOM, "BOM");
 
       // ==================== SHEET PER DEPARTEMEN ====================
+      // ==================== SHEET PER DEPARTEMEN ====================
       const materialsByDept = new Map<string, Map<string, any[]>>();
 
       for (const row of materialDataForDatabase) {
@@ -4394,74 +4439,71 @@ export default function ProductionPlanPage() {
         if (!materialsByDept.has(dept)) materialsByDept.set(dept, new Map());
         const deptMap = materialsByDept.get(dept)!;
 
+        // PERHATIKAN INDEKS YANG BARU (setelah menghapus 2 kolom pertama)
+        // Sebelumnya: 0=Barang Jadi, 1=QTY PO, 2=Kode Material, dst
+        // Sekarang:   0=Kode Material, 1=Nama Material, 2=Nama China, dst
         const rowArray = [
-          row["Barang Jadi"],
-          "", // QTY PO Dipesan (akan diisi nanti)
-          row["Kode Material"],
-          row["Nama Material"],
-          row["Nama China"],
-          row["Spesifikasi"],
-          row["Warna"],
-          row["Bahan"],
-          row["Departemen"],
-          parseInt(row["Total Kebutuhan"].replace(/,/g, "")) || 0,
-          parseInt(row["Qty Reserved (PO Lain)"].replace(/,/g, "")) || 0,
-          parseInt(row["Total Dibutuhkan"].replace(/,/g, "")) || 0,
-          parseInt(row["Stok Wincp (Real)"].replace(/,/g, "")) || 0,
-          parseInt(row["Saldo Akhir"].replace(/,/g, "")) || 0,
-          parseInt(row["Qty Available"].replace(/,/g, "")) || 0,
-          row["Reserved Oleh SPK"],
-          row["Status Stock"],
-          row["Keterangan Variant"],
+          row["Kode Material"], // index 0
+          row["Nama Material"], // index 1
+          row["Nama China"], // index 2
+          row["Spesifikasi"], // index 3
+          row["Warna"], // index 4
+          row["Bahan"], // index 5
+          row["Departemen"], // index 6
+          parseInt(row["Total Kebutuhan"].replace(/,/g, "")) || 0, // index 7
+          parseInt(row["Qty Reserved (PO Lain)"].replace(/,/g, "")) || 0, // index 8
+          parseInt(row["Total Dibutuhkan"].replace(/,/g, "")) || 0, // index 9
+          parseInt(row["Stok Wincp (Real)"].replace(/,/g, "")) || 0, // index 10
+          parseInt(row["Saldo Akhir"].replace(/,/g, "")) || 0, // index 11
+          parseInt(row["Qty Available"].replace(/,/g, "")) || 0, // index 12
+          row["Reserved Oleh SPK"], // index 13
+          row["Status Stock"], // index 14
+          row["Keterangan Variant"], // index 15
         ];
 
         if (!deptMap.has(materialCode)) {
           deptMap.set(materialCode, rowArray);
         } else {
           const existing = deptMap.get(materialCode)!;
-          existing[9] = (existing[9] || 0) + (rowArray[9] || 0);
-          existing[11] = (existing[11] || 0) + (rowArray[11] || 0);
-          existing[14] = (existing[13] || 0) - (existing[11] || 0);
-          existing[16] =
-            existing[14] > 0
+
+          // Update jumlah (indeks yang berubah)
+          existing[7] = (existing[7] || 0) + (rowArray[7] || 0); // Total Kebutuhan
+          existing[9] = (existing[9] || 0) + (rowArray[9] || 0); // Total Dibutuhkan
+
+          // Hitung ulang Sisa Stok (indeks 12) = Stok Akhir (11) - Total Dibutuhkan (9)
+          existing[12] = (existing[11] || 0) - (existing[9] || 0);
+
+          // Update Status (indeks 14)
+          existing[14] =
+            existing[12] > 0
               ? "KELEBIHAN"
-              : existing[14] < 0
+              : existing[12] < 0
                 ? "KURANG"
                 : "CUKUP";
 
-          const existingBarangJadi = existing[0] || "";
-          const newBarangJadi = rowArray[0] || "";
-          if (
-            newBarangJadi &&
-            !existingBarangJadi.includes(newBarangJadi.split("\n")[0])
-          ) {
-            existing[0] =
-              existingBarangJadi +
-              (existingBarangJadi ? "\n" : "") +
-              newBarangJadi;
-          }
-
-          const existingReserved = existing[15] || "";
-          const newReserved = rowArray[15] || "";
+          // Gabungkan Reserved Oleh SPK (indeks 13)
+          const existingReserved = existing[13] || "";
+          const newReserved = rowArray[13] || "";
           if (
             newReserved !== "-" &&
             newReserved &&
             !existingReserved.includes(newReserved)
           ) {
-            existing[15] =
+            existing[13] =
               existingReserved +
               (existingReserved !== "-" && existingReserved ? "\n" : "") +
               newReserved;
           }
 
-          const existingVariant = existing[17] || "";
-          const newVariant = rowArray[17] || "";
+          // Gabungkan Keterangan Variant (indeks 15)
+          const existingVariant = existing[15] || "";
+          const newVariant = rowArray[15] || "";
           if (
             newVariant !== "-" &&
             newVariant !== existingVariant &&
             !existingVariant.includes(newVariant)
           ) {
-            existing[17] =
+            existing[15] =
               existingVariant +
               (existingVariant !== "-" && existingVariant ? " / " : "") +
               newVariant;
@@ -4475,35 +4517,34 @@ export default function ProductionPlanPage() {
       for (const [dept, materialMap] of materialsByDept) {
         const rows: any[][] = [];
         for (const row of materialMap.values()) rows.push(row);
-        rows.sort((a, b) => a[2].localeCompare(b[2]));
+        // Urutkan berdasarkan Kode Material (index 0)
+        rows.sort((a, b) => (a[0] || "").localeCompare(b[0] || ""));
         finalMaterialsByDept.set(dept, rows);
       }
 
       const sortedDepartments = Array.from(finalMaterialsByDept.keys()).sort();
+
+      // Lebar kolom yang sesuai dengan jumlah kolom baru
       const deptColWidths = [
-        { wch: 50 },
-        { wch: 20 },
-        { wch: 15 },
-        { wch: 40 },
-        { wch: 35 },
-        { wch: 30 },
-        { wch: 20 },
-        { wch: 25 },
-        { wch: 20 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 50 },
-        { wch: 15 },
-        { wch: 25 },
+        { wch: 18 }, // Kode Material
+        { wch: 40 }, // Nama Material
+        { wch: 35 }, // Nama China
+        { wch: 30 }, // Spesifikasi
+        { wch: 20 }, // Warna
+        { wch: 25 }, // Bahan
+        { wch: 20 }, // Departemen
+        { wch: 18 }, // Total Kebutuhan
+        { wch: 18 }, // Reserved (Qty PO Lain)
+        { wch: 18 }, // Total Dibutuhkan
+        { wch: 18 }, // Stok Wincp (Real)
+        { wch: 18 }, // Stok Akhir
+        { wch: 18 }, // Sisa Stok
+        { wch: 50 }, // Reserved Oleh SPK
+        { wch: 15 }, // Status
+        { wch: 30 }, // Keterangan Variant
       ];
 
       const headersDept = [
-        "Barang Jadi",
-        "QTY PO Dipesan",
         "Kode Material",
         "Nama Material",
         "Nama China",
@@ -4525,17 +4566,17 @@ export default function ProductionPlanPage() {
       for (const dept of sortedDepartments) {
         const deptMaterials = finalMaterialsByDept.get(dept) || [];
         const totalNeeded = deptMaterials.reduce(
-          (sum, row) => sum + (row[9] || 0),
+          (sum, row) => sum + (row[7] || 0),
           0,
         );
         const totalSisa = deptMaterials.reduce(
-          (sum, row) => sum + (row[14] || 0),
+          (sum, row) => sum + (row[12] || 0),
           0,
         );
 
         const variantItems = deptMaterials
-          .filter((row) => row[17] && row[17] !== "-")
-          .map((row) => `${row[2]} (${row[3]})`);
+          .filter((row) => row[15] && row[15] !== "-")
+          .map((row) => `${row[0]} (${row[1]})`);
         const variantNote =
           variantItems.length > 0
             ? `Catatan: Item dengan variant (Grade A,B,C): ${variantItems.join(", ")}`
@@ -4550,7 +4591,7 @@ export default function ProductionPlanPage() {
           [
             `Catatan: Material dengan kode yang sama telah dijumlahkan total kebutuhannya`,
           ],
-          variantNote ? [`${variantNote}`] : [],
+          ...(variantNote ? [[variantNote]] : []),
           [],
           ["DETAIL MATERIAL"],
           headersDept,
@@ -4563,14 +4604,11 @@ export default function ProductionPlanPage() {
           ],
         ];
 
-        const finalWsData = variantNote
-          ? wsData
-          : wsData.filter((_, idx) => idx !== 4);
-
-        const wsDept = XLSX.utils.aoa_to_sheet(finalWsData);
+        const wsDept = XLSX.utils.aoa_to_sheet(wsData);
         wsDept["!cols"] = deptColWidths;
 
-        wsDept["!merges"] = [
+        // Merge cells untuk header
+        const merges = [
           { s: { r: 0, c: 0 }, e: { r: 0, c: headersDept.length - 1 } },
           { s: { r: 1, c: 0 }, e: { r: 1, c: headersDept.length - 1 } },
           { s: { r: 2, c: 0 }, e: { r: 2, c: headersDept.length - 1 } },
@@ -4578,11 +4616,13 @@ export default function ProductionPlanPage() {
         ];
 
         if (variantNote) {
-          wsDept["!merges"].push({
+          merges.push({
             s: { r: 4, c: 0 },
             e: { r: 4, c: headersDept.length - 1 },
           });
         }
+
+        wsDept["!merges"] = merges;
 
         let sheetName = sanitizeSheetName(dept.toUpperCase());
         sheetName = getUniqueSheetName(wb, sheetName);
