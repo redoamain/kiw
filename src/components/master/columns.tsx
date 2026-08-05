@@ -25,7 +25,7 @@ export const columns = (
   setSelectedRows: ColumnsProps["setSelectedRows"],
   filteredData: masterType[],
   onEditItem?: (item: masterType) => void,
-  onDeleteItem?: (item: masterType) => void
+  onDeleteItem?: (item: masterType) => void,
 ): ColumnDef<masterType>[] => [
   {
     id: "select",
@@ -36,7 +36,7 @@ export const columns = (
           table.toggleAllRowsSelected(!!value);
           if (value) {
             setSelectedRows(
-              table.getSelectedRowModel().rows.map((row) => row.original)
+              table.getSelectedRowModel().rows.map((row) => row.original),
             );
           } else {
             setSelectedRows([]);
@@ -55,8 +55,8 @@ export const columns = (
           } else {
             setSelectedRows((prev) =>
               prev.filter(
-                (selectedRow) => selectedRow.ItemID !== row.original.ItemID
-              )
+                (selectedRow) => selectedRow.ItemID !== row.original.ItemID,
+              ),
             );
           }
         }}
@@ -118,11 +118,45 @@ export const columns = (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="cursor-help">
-                {itemName.length > 40 ? `${itemName.substring(0, 40)}...` : itemName}
+                {itemName.length > 40
+                  ? `${itemName.substring(0, 40)}...`
+                  : itemName}
               </span>
             </TooltipTrigger>
             <TooltipContent className="max-w-md">
               <p>{itemName}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
+    },
+  },
+  {
+    accessorKey: "namebc",
+    header: ({ column }) => (
+      <Button
+        variant="ghost"
+        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        className="whitespace-nowrap"
+      >
+        Nama BC/Chesa
+        <ArrowUpDown className="ml-2 h-4 w-4" />
+      </Button>
+    ),
+    cell: ({ row }) => {
+      const namebc = row.getValue("namebc") as string;
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="cursor-help">
+                {namebc.length > 40
+                  ? `${namebc.substring(0, 40)}...`
+                  : namebc}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-md">
+              <p>{namebc}</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -149,11 +183,13 @@ export const columns = (
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="cursor-help text-sm">
-                {itemName2.length > 35 ? `${itemName2.substring(0, 35)}...` : itemName2}
+                {itemName2.length > 35
+                  ? `${itemName2.substring(0, 35)}...`
+                  : itemName2}
               </span>
             </TooltipTrigger>
             <TooltipContent className="max-w-lg">
-              <p className="whitespace-pre-wrap break-words">{itemName2}</p>
+              <p className="whitespace-pre-wrap wrap-break-word">{itemName2}</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -213,61 +249,61 @@ export const columns = (
     },
   },
   // components/master/columns.tsx - update untuk KodeJenis dan NamaJenis
-{
-  accessorKey: "KodeJenis",
-  header: "Kode Kategori",
-  cell: ({ row }) => {
-    const kodeJenis = row.getValue("KodeJenis") as string;
-    return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="cursor-help font-mono text-sm">
-              {kodeJenis || "-"}
-            </span>
-          </TooltipTrigger>
-          {kodeJenis && (
-            <TooltipContent>
-              <p>Kode: {kodeJenis}</p>
-            </TooltipContent>
-          )}
-        </Tooltip>
-      </TooltipProvider>
-    );
+  {
+    accessorKey: "KodeJenis",
+    header: "Kode Kategori",
+    cell: ({ row }) => {
+      const kodeJenis = row.getValue("KodeJenis") as string;
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="cursor-help font-mono text-sm">
+                {kodeJenis || "-"}
+              </span>
+            </TooltipTrigger>
+            {kodeJenis && (
+              <TooltipContent>
+                <p>Kode: {kodeJenis}</p>
+              </TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
+      );
+    },
   },
-},
-{
-  accessorKey: "NamaJenis",
-  header: "Kategori",
-  cell: ({ row }) => {
-    const namaJenis = row.getValue("NamaJenis") as string;
-    const kodeJenis = row.getValue("KodeJenis") as string;
-    return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="cursor-help">
-              {namaJenis || "-"}
-            </span>
-          </TooltipTrigger>
-          {namaJenis && (
-            <TooltipContent>
-              <p>{namaJenis}</p>
-              {kodeJenis && <p className="text-xs text-gray-500">Kode: {kodeJenis}</p>}
-            </TooltipContent>
-          )}
-        </Tooltip>
-      </TooltipProvider>
-    );
+  {
+    accessorKey: "NamaJenis",
+    header: "Kategori",
+    cell: ({ row }) => {
+      const namaJenis = row.getValue("NamaJenis") as string;
+      const kodeJenis = row.getValue("KodeJenis") as string;
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="cursor-help">{namaJenis || "-"}</span>
+            </TooltipTrigger>
+            {namaJenis && (
+              <TooltipContent>
+                <p>{namaJenis}</p>
+                {kodeJenis && (
+                  <p className="text-xs text-gray-500">Kode: {kodeJenis}</p>
+                )}
+              </TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
+      );
+    },
   },
-},
   {
     accessorKey: "Departemen",
     header: "Proses",
     cell: ({ row }) => {
       const dept = row.getValue("Departemen") as string;
       if (!dept) return <span className="text-gray-400">-</span>;
-      
+
       const getBadgeColor = (dept: string) => {
         switch (dept?.toLowerCase()) {
           case "molding":
@@ -284,9 +320,11 @@ export const columns = (
             return "bg-gray-100 text-gray-800";
         }
       };
-      
+
       return (
-        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getBadgeColor(dept)}`}>
+        <span
+          className={`px-2 py-1 rounded-full text-xs font-medium ${getBadgeColor(dept)}`}
+        >
           {dept}
         </span>
       );

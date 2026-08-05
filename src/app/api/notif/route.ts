@@ -11,9 +11,9 @@ interface TelegramResponse {
 export async function POST(req: NextRequest) {
   const { message } = await req.json(); // Mendapatkan data JSON dari request
 
-  const chatIds = ["904514717","6551726602", "5338845190", "6024064758","904514717"]; // Daftar chat IDs yang ingin dikirimi pesan
+  const chatIds = ["904514717", "6551726602", "5338845190", "6024064758"]; // Daftar chat IDs yang ingin dikirimi pesan
   // "6551726602", "5338845190", "6024064758","904514717"
-  const token = "7880924007:AAHvKkqrvKA45d6fLM0huUD1-H4O_hRrtW8"; // Ganti dengan token bot Telegram Anda
+  const token = "8817696287:AAFBY_HNx4kKq7rsEO08CiH69QET-Lp7WJw"; // Ganti dengan token bot Telegram Anda
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`; // URL API Telegram
 
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
             success: false,
             message: "Failed to send message to one or more chats",
           },
-          { status: 500 }
+          { status: 500 },
         );
       }
     }
@@ -48,12 +48,12 @@ export async function POST(req: NextRequest) {
     // Jika pesan berhasil dikirim ke semua chat ID
     return NextResponse.json(
       { success: true, message: "Message sent to multiple Telegram chats" },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (error) {
     return NextResponse.json(
       { success: false, message: "Error sending message to Telegram" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
