@@ -21,7 +21,7 @@ export async function GET(request: Request) {
         SELECT 
           a.[ItemID],
           a.[ItemName],
-          a.[namebc], AS namebc,
+          a.[namebc] AS namebc,
           a.[ItemName2] AS ItemName2,
           a.[warnac] AS warna,
           a.[Mark] AS Departemen,
@@ -60,7 +60,7 @@ export async function GET(request: Request) {
       SELECT 
         a.[ItemID],
         a.[ItemName],
-         a.[namebc], AS namebc,
+         a.[namebc] AS namebc,
         a.[ItemName2] AS ItemName2,
         a.[warnac] as warna,
         a.[Mark] AS Departemen,
